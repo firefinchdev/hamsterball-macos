@@ -1,0 +1,176 @@
+<SONG> * Title Screen Theme *
+	<NAME>Main Theme</NAME>
+	<HEX>02</HEX>
+</SONG>
+
+<SONG> * Main theme w/o intro *
+	<NAME>Main Theme - No Intro</NAME>
+	<HEX>03</HEX>
+</SONG>
+
+<SONG> * Beginner Race Theme *
+	<NAME>Hamster Nation</NAME>
+	<HEX>50</HEX>
+</SONG>
+
+<SONG> * Beginner Race Theme, no into *
+	<NAME>Hamster Nation - No Intro</NAME>
+	<HEX>50</HEX>
+</SONG>
+
+<SONG> * Cascade Race Theme *
+	<NAME>Cascade Race</NAME>
+	<HEX>7F</HEX>
+</SONG>
+
+<SONG> * Cascade Race Theme, no into *
+	<NAME>Cascade Race - No Intro</NAME>
+	<HEX>81</HEX>
+</SONG>
+
+<SONG> * Intermediate Race Theme *
+	<NAME>Gerbil Groove</NAME>
+	<HEX>26</HEX>
+</SONG>
+
+<SONG> * Intermediate Race Theme, no intro *
+	<NAME>Gerbil Groove - No Intro</NAME>
+	<HEX>28</HEX>
+</SONG>
+
+
+<SONG> * Dizzy Race Theme *
+	<NAME>Dizzy!</NAME>
+	<HEX>47</HEX>
+</SONG>
+
+<SONG> * Dizzy Race Theme, no intro *
+	<NAME>Dizzy! - No Intro</NAME>
+	<HEX>47</HEX>
+</SONG>
+
+<SONG> * Tower Race Theme *
+	<NAME>Happy Rush</NAME>
+	<HEX>2F</HEX>
+</SONG>
+
+<SONG> * Tower Race Theme, no intro *
+	<NAME>Happy Rush - No Intro</NAME>
+	<HEX>2F</HEX>
+</SONG>
+
+<SONG> * Up Race Theme *
+	<NAME>Up Race</NAME>
+	<HEX>8B</HEX>
+</SONG>
+
+<SONG> * Up Race Theme, no into *
+	<NAME>Up Race - No Intro</NAME>
+	<HEX>8B</HEX>
+</SONG>
+
+<SONG> * Neon Race Theme *
+	<NAME>Neon Theme</NAME>
+	<HEX>A8</HEX>
+</SONG>
+
+<SONG> * Expert Race Theme *
+	<NAME>Fight!</NAME>
+	<HEX>08</HEX>
+</SONG>
+
+<SONG> * Expert Race Theme, no intro *
+	<NAME>Fight! - No Intro</NAME>
+	<HEX>09</HEX>
+</SONG>
+
+
+<SONG> * Odd Race Theme *
+	<NAME>Ninja Hamster</NAME>
+	<HEX>38</HEX>
+</SONG>
+
+<SONG> * Odd Race Theme, no intro *
+	<NAME>Ninja Hamster - No Intro</NAME>
+	<HEX>3A</HEX>
+</SONG>
+
+
+<SONG> * Toob Race Theme *
+	<NAME>Rodenthood</NAME>
+	<HEX>55</HEX>
+</SONG>
+
+<SONG> * Toob Race Theme, no intro *
+	<NAME>Rodenthood - No Intro</NAME>
+	<HEX>56</HEX>
+</SONG>
+
+<SONG> * Wobbly Race Theme *
+	<NAME>Hamster Chase</NAME>
+	<HEX>19</HEX>
+</SONG>
+
+<SONG> * Wobbly Race Theme, no intro *
+	<NAME>Hamster Chase - No Intro</NAME>
+	<HEX>1B</HEX>
+</SONG>
+
+<SONG> * Sky Race Theme *
+	<NAME>Bucky Break</NAME>
+	<HEX>5C</HEX>
+</SONG>
+
+<SONG> * Glass Race Theme *
+	<NAME>Glass Theme</NAME>
+	<HEX>9F</HEX>
+</SONG>
+
+
+<SONG> * Sky Race Theme, no intro *
+	<NAME>Bucky Break - No Intro</NAME>
+	<HEX>5C</HEX>
+</SONG>
+
+<SONG> * Master Race Theme *
+	<NAME>Master Theme</NAME>
+	<HEX>71</HEX>
+</SONG>
+
+<SONG> * Master Race Theme, no intro *
+	<NAME>Master Theme - No Intro</NAME>
+	<HEX>71</HEX>
+</SONG>
+
+<SONG> * Impossible Race Theme *
+	<NAME>Impossible Theme</NAME>
+	<HEX>94</HEX>
+</SONG>
+
+
+
+<SONG> * Game Over Song *
+	<NAME>Game Over</NAME>
+	<HEX>62</HEX>
+</SONG>
+
+<SONG> * Tournament Overview Song *
+	<NAME>Tournament</NAME>
+	<HEX>63</HEX>
+</SONG>
+
+
+<SONG> * Goal Song *
+	<NAME>Goal!</NAME>
+	<HEX>6B</HEX>
+</SONG>
+
+<SONG> * High Scores *
+	<NAME>High Scores</NAME>
+	<HEX>13</HEX>
+</SONG>
+
+<SONG> * Loading Song *
+	<NAME>Loading</NAME>
+	<HEX>6F</HEX>
+</SONG>

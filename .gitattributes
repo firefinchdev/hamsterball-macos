@@ -1,0 +1,3 @@
+# game data must stay byte-exact
+game/** -text
+*.icns binary

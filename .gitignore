@@ -1,0 +1,22 @@
+# build output
+/build/
+/dist/
+/hbwrap
+*.o
+
+# Unicorn is downloaded, patched and built by third_party/build_unicorn.sh
+/third_party/unicorn/
+/third_party/unicorn-*/
+/third_party/*.tar.gz
+
+# files the game writes while running from game/ during development
+/game/registry.txt
+/game/drive_c/
+
+# test output
+/tests/out/
+
+# icon working files
+/packaging/*.iconset/
+
+.DS_Store
