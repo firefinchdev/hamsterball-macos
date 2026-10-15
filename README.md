@@ -7,7 +7,7 @@ Instead, this project is a small purpose-built compatibility layer. It runs the 
 `hamsterball.exe` with an x86 CPU emulator and replaces the Windows APIs the game uses (Direct3D 8,
 DirectInput, DirectSound and friends) with macOS equivalents.
 
-The game files are in `game/` and are embedded in the app. This is a private repository.
+The game files are in `game/` and are embedded in the app.
 
 ## Features
 
