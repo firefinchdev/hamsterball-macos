@@ -12,7 +12,7 @@ The game files are in `game/` and are embedded in the app.
 ## Features
 
 - Every race, Tournament, Time Trials, Mirror Tournament and Party Games (split-screen and 4-player Rodent Rumble)
-- 60 FPS on Apple Silicon, with the 3D scenes rendered at up to 4× the original resolution for sharp Retina output
+- Full speed on Apple Silicon (~88 FPS, the game's own simulation rate; shown in full on 120 Hz ProMotion displays), with the 3D scenes rendered at up to 4× the original resolution for sharp Retina output
 - Mouse steering (captured relative mouse, like the original), keyboard, and **gamepads paired with macOS**
   (PS5 DualSense, PS4, Xbox, MFi) as Party Games players
 - Music (MO3 soundtrack) and sound effects
@@ -91,6 +91,7 @@ Together these make the heaviest levels about 6× faster.
 | Variable | Effect |
 |---|---|
 | `HB_WINDOWED=1` | ignore the game's fullscreen setting |
+| `HB_VSYNC=1` | sync presentation to the display (default off: the game draws ~88 FPS, its simulation rate) |
 | `HB_RENDER_SCALE=n` | internal render scale (default: matches the display, max 4) |
 | `HB_SCALE=n` | initial window size multiplier |
 | `HB_MOUSE_SENS=f` | extra mouse sensitivity factor during play |

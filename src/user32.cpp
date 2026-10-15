@@ -28,7 +28,10 @@ void ensure_window(int w, int h) {
     if (!window) fatal("SDL_CreateWindow: %s", SDL_GetError());
     gl = SDL_GL_CreateContext(window);
     if (!gl) fatal("SDL_GL_CreateContext: %s", SDL_GetError());
-    SDL_GL_SetSwapInterval(1);
+    // No vsync by default: the game paces itself (88 simulation ticks/s, one frame each), and
+    // a 60 Hz swap wait would throw away a third of its frames. macOS composites windows, so
+    // this doesn't tear; on ProMotion displays every frame is shown. HB_VSYNC=1 caps to the display.
+    SDL_GL_SetSwapInterval(getenv("HB_VSYNC") ? atoi(getenv("HB_VSYNC")) : 0);
     client_w = w; client_h = h;
     SDL_StartTextInput();
 }
