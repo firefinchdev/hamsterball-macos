@@ -4,6 +4,9 @@
 #include <sys/mman.h>
 #include <pthread.h>
 #include <SDL.h>
+#ifdef __ANDROID__
+#include <android/log.h>
+#endif
 #include <unordered_map>
 #include <set>
 #include <algorithm>
@@ -27,7 +30,13 @@ static const u32 TEB_ADDR = 0x7FFDE000, PEB_ADDR = 0x7FFDF000, GDT_ADDR = 0x7FFE
 static const u32 TLS_SLOTS_ADDR = 0x7FFDD000;  // 64 TLS slots (TEB+0xE10 normally)
 
 void logf(const char* fmt, ...) {
-    va_list ap; va_start(ap, fmt); vfprintf(stderr, fmt, ap); va_end(ap);
+    va_list ap; va_start(ap, fmt);
+#ifdef __ANDROID__
+    va_list ap2; va_copy(ap2, ap);
+    __android_log_vprint(ANDROID_LOG_INFO, "Hamsterball", fmt, ap2);
+    va_end(ap2);
+#endif
+    vfprintf(stderr, fmt, ap); va_end(ap);
     fputc('\n', stderr);
 }
 void dump_regs() {
@@ -47,6 +56,9 @@ void fatal(const char* fmt, ...) {
     vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
     fprintf(stderr, "FATAL: %s\n", msg);
+#ifdef __ANDROID__
+    __android_log_print(ANDROID_LOG_ERROR, "Hamsterball", "FATAL: %s", msg);
+#endif
     dump_regs();
     fflush(stderr);
     if (!getenv("HB_SCRIPT")) {

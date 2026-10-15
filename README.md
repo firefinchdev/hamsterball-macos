@@ -32,13 +32,34 @@ saves and settings are kept. Every level and game mode starts unlocked.
 **Requirements:** an Apple Silicon Mac. The release is built against current Homebrew libraries,
 so it needs a recent macOS. If it won't start on your version, [build it yourself](#build-from-source).
 
+## Android
+
+`HamsterBall-Android-<version>-arm64.apk` runs the same compatibility layer on 64-bit ARM Android phones and
+tablets (Android 8.0 or newer). Install it by opening the APK on the device (allow installing from that source),
+or with `adb install`.
+
+- Landscape, letterboxed to the game's 4:3.
+- **Drag a finger** to roll the ball; the screen acts like a trackball. **Tap** to select in menus.
+- **Back** pauses (it's the game's Escape key). A **two-finger tap** toggles the on-screen keyboard, for typing high-score names.
+- Gamepads paired with the device work in Party Games, as on the Mac.
+- All levels and modes start unlocked. Game data and saves live in the app's private storage.
+
+How the port differs from macOS:
+- The renderer's desktop OpenGL calls go through [gl4es](https://github.com/ptitSeb/gl4es) to OpenGL ES 2.
+- SDL2's Android activity hosts the native code.
+- The game files ship as APK assets and are extracted on first launch.
+
+Build it with `android/build_apk.sh`. It needs Android Studio's SDK + NDK and JDK 17, downloads SDL2, gl4es,
+libopenmpt and Unicorn, and writes the APK to `dist/`. `android/run_emulator_test.sh` installs a debug build on a
+connected device or emulator and prints its log.
+
 ## Playing
 
 | | |
 |---|---|
 | Steer | Mouse, or the arrow keys |
 | Pause | Esc (or right mouse button) |
-| Fullscreen | Cmd+F or Alt+Enter |
+| Fullscreen (Mac) | Cmd+F or Alt+Enter |
 | Quit | Cmd+Q |
 | Gamepad | Connect it before launching. In **Party Games**, select a player row and press Return to cycle that player's input to the controller. Left stick or d-pad steers. |
 

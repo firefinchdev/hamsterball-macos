@@ -1,0 +1,76 @@
+plugins {
+    id 'com.android.application'
+}
+
+def repoRoot = file('../..')
+def versionFile = new File(repoRoot, 'VERSION')
+def appVersion = versionFile.exists() ? versionFile.text.trim() : '1.0.0'
+
+android {
+    namespace 'dev.firefinch.hamsterball'
+    compileSdk 35
+    ndkVersion '28.2.13676358'
+
+    defaultConfig {
+        applicationId 'dev.firefinch.hamsterball'
+        minSdk 26
+        targetSdk 35
+        versionCode appVersion.tokenize('.').inject(0) { acc, p -> acc * 100 + p.toInteger() }
+        versionName appVersion
+        ndk { abiFilters 'arm64-v8a' }
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_STL=c++_static'
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // sideloaded build: signed with the debug key so it installs without extra setup
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path 'jni/CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    sourceSets.main {
+        // SDL's Java glue straight from the fetched SDL source tree
+        java.srcDirs += '../third_party/src/SDL2/android-project/app/src/main/java'
+        assets.srcDirs += "$buildDir/generated/gameAssets"
+    }
+
+    // the game data is already compressed (PNG/OGG/MO3); keep the APK quick to read
+    androidResources { noCompress += ['png', 'ogg', 'jpg', 'mo3'] }
+
+    lint { abortOnError false }
+}
+
+// Package the game folder (../../game) as APK assets plus a manifest of its files,
+// which the app extracts to its private storage on first launch.
+tasks.register('prepareGameAssets') {
+    def gameDir = new File(repoRoot, 'game')
+    def outDir = file("$buildDir/generated/gameAssets")
+    inputs.dir gameDir
+    outputs.dir outDir
+    doLast {
+        delete outDir
+        copy {
+            from gameDir
+            into new File(outDir, 'game')
+            exclude 'registry.txt', 'drive_c/**'
+        }
+        def files = []
+        new File(outDir, 'game').eachFileRecurse(groovy.io.FileType.FILES) { f ->
+            files << new File(outDir, 'game').toPath().relativize(f.toPath()).toString()
+        }
+        new File(outDir, 'game_manifest.txt').text = files.sort().join('\n') + '\n'
+    }
+}
+preBuild.dependsOn 'prepareGameAssets'

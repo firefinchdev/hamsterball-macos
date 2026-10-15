@@ -5,8 +5,13 @@
 // converted on every draw into a fixed host layout (D3D colours are BGRA, pre-transformed
 // vertices need un-projecting), which is cheap for a game of this era.
 #include "platform.h"
+#ifdef __ANDROID__
+#include <GL/gl.h>  // gl4es
+#include <GL/glext.h>
+#else
 #include <OpenGL/gl.h>
 #include <OpenGL/glext.h>
+#endif
 #include <cmath>
 #include <algorithm>
 
@@ -228,10 +233,18 @@ static u32 choose_scale() {
     float backing = wh ? (float)dh / wh : 1.0f;
     (void)ddpi;
     u32 k = (u32)ceilf(px_h * backing / bb_h);
+#ifdef __ANDROID__
+    return std::max(1u, std::min(2u, k));  // mobile GPUs: cap supersampling at 2x
+#else
     return std::max(1u, std::min(4u, k));
+#endif
+}
+static void glcheck(const char* where) {
+    for (GLenum e; (e = glGetError()) != GL_NO_ERROR;) logf("GL error %x after %s", e, where);
 }
 static void create_backbuffer() {
     bb_scale = choose_scale();
+    glcheck("before back buffer");
     logf("render scale %ux (%ux%u)", bb_scale, bb_w * bb_scale, bb_h * bb_scale);
     if (bb_fbo) {
         glDeleteFramebuffersEXT(1, &bb_fbo); glDeleteTextures(1, &bb_color); glDeleteRenderbuffersEXT(1, &bb_depth);
@@ -241,15 +254,27 @@ static void create_backbuffer() {
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, bb_w * bb_scale, bb_h * bb_scale, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glGenRenderbuffersEXT(1, &bb_depth);
-    glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, bb_depth);
-    glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, GL_DEPTH24_STENCIL8_EXT, bb_w * bb_scale, bb_h * bb_scale);
+    glcheck("color texture");
     glGenFramebuffersEXT(1, &bb_fbo);
     glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, bb_fbo);
     glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D, bb_color, 0);
-    glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, bb_depth);
-    glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_STENCIL_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, bb_depth);
-    GLenum s = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
+    // depth/stencil: packed 24/8 where supported; OpenGL ES devices may only take depth alone
+    struct { GLenum fmt; bool stencil; } tries[] = {{GL_DEPTH24_STENCIL8_EXT, true}, {GL_DEPTH_COMPONENT24, false}, {GL_DEPTH_COMPONENT16, false}};
+    GLenum s = 0;
+    for (auto& t : tries) {
+        glGenRenderbuffersEXT(1, &bb_depth);
+        glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, bb_depth);
+        glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, t.fmt, bb_w * bb_scale, bb_h * bb_scale);
+        glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, bb_depth);
+        glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_STENCIL_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, t.stencil ? bb_depth : 0);
+        glcheck("depth buffer");
+        s = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
+        if (s == GL_FRAMEBUFFER_COMPLETE_EXT) break;
+        logf("back buffer: depth format %x not usable (status %x)", t.fmt, s);
+        glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, 0);
+        glDeleteRenderbuffersEXT(1, &bb_depth);
+    }
+    glcheck("status check");
     if (s != GL_FRAMEBUFFER_COMPLETE_EXT) fatal("back buffer FBO incomplete: %x", s);
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -950,6 +975,36 @@ static void present_frame() {
     int x, y, w, h;
     plat::present_rect(x, y, w, h);
     int dw, dh; SDL_GL_GetDrawableSize(plat::window, &dw, &dh);
+#ifdef __ANDROID__
+    // OpenGL ES 2 has no framebuffer blit: draw the back buffer texture as a quad instead.
+    // (Every draw call sets the state it needs, so nothing here has to be restored.)
+    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+    glDisable(GL_SCISSOR_TEST); glDisable(GL_DEPTH_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_BLEND);
+    glDisable(GL_ALPHA_TEST); glDisable(GL_CULL_FACE); glDisable(GL_FOG); glDisable(GL_LIGHTING); glDisable(GL_COLOR_SUM);
+    glColorMask(1, 1, 1, 1);
+    glViewport(0, 0, dw, dh);
+    glClearColor(0, 0, 0, 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    for (int u = 1; u < g_max_units; u++) { glActiveTexture(GL_TEXTURE0 + u); glDisable(GL_TEXTURE_2D); }
+    glActiveTexture(GL_TEXTURE0);
+    glEnable(GL_TEXTURE_2D);
+    glBindTexture(GL_TEXTURE_2D, bb_color);
+    glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE);
+    glMatrixMode(GL_TEXTURE); glLoadIdentity();
+    glMatrixMode(GL_PROJECTION); glLoadIdentity(); glOrtho(0, dw, 0, dh, -1, 1);
+    glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+    glDisableClientState(GL_VERTEX_ARRAY); glDisableClientState(GL_COLOR_ARRAY); glDisableClientState(GL_NORMAL_ARRAY);
+    glDisableClientState(GL_SECONDARY_COLOR_ARRAY); glDisableClientState(GL_FOG_COORDINATE_ARRAY);
+    glClientActiveTexture(GL_TEXTURE0); glDisableClientState(GL_TEXTURE_COORD_ARRAY);
+    glColor4f(1, 1, 1, 1);
+    glBegin(GL_QUADS);
+    glTexCoord2f(0, 0); glVertex2f((float)x, (float)y);
+    glTexCoord2f(1, 0); glVertex2f((float)(x + w), (float)y);
+    glTexCoord2f(1, 1); glVertex2f((float)(x + w), (float)(y + h));
+    glTexCoord2f(0, 1); glVertex2f((float)x, (float)(y + h));
+    glEnd();
+    glFlush();  // gl4es queues immediate-mode draws; SDL swaps through EGL without telling it
+#else
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, bb_fbo);
     glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, 0);
     glDisable(GL_SCISSOR_TEST);
@@ -958,6 +1013,7 @@ static void present_frame() {
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
     glBlitFramebufferEXT(0, 0, bb_w * bb_scale, bb_h * bb_scale, x, y, x + w, y + h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+#endif
     SDL_GL_SwapWindow(plat::window);
     glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, bb_fbo);
     frame_no++;

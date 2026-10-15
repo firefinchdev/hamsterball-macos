@@ -2,6 +2,9 @@
 #include "platform.h"
 extern u8 g_script_keys[SDL_NUM_SCANCODES];
 #include <algorithm>
+#ifdef __ANDROID__
+extern "C" void initialize_gl4es(void);
+#endif
 
 namespace plat {
 SDL_Window* window = nullptr;
@@ -16,16 +19,29 @@ std::deque<GuestMsg> queue;
 
 void ensure_window(int w, int h) {
     if (window) return;
+#ifdef __ANDROID__
+    // OpenGL ES 2 context; gl4es provides the desktop GL fixed-function API on top of it
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+    Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN;
+#else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
+    Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN;
+#endif
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     int scale = 1;
     if (const char* s = getenv("HB_SCALE")) scale = std::max(1, atoi(s));
-    window = SDL_CreateWindow("Hamsterball", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w * scale, h * scale,
-                              SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN);
+    window = SDL_CreateWindow("Hamsterball", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w * scale, h * scale, flags);
     if (!window) fatal("SDL_CreateWindow: %s", SDL_GetError());
+#ifdef __ANDROID__
+    // before SDL's context exists: gl4es probes the GPU with a temporary context of its own
+    // and leaves no context current afterwards
+    initialize_gl4es();
+#endif
     gl = SDL_GL_CreateContext(window);
     if (!gl) fatal("SDL_GL_CreateContext: %s", SDL_GetError());
     // No vsync by default: the game paces itself (88 simulation ticks/s, one frame each), and
@@ -33,7 +49,11 @@ void ensure_window(int w, int h) {
     // this doesn't tear; on ProMotion displays every frame is shown. HB_VSYNC=1 caps to the display.
     SDL_GL_SetSwapInterval(getenv("HB_VSYNC") ? atoi(getenv("HB_VSYNC")) : 0);
     client_w = w; client_h = h;
+#ifdef __ANDROID__
+    SDL_StopTextInput();  // the on-screen keyboard is shown on demand (two-finger tap)
+#else
     SDL_StartTextInput();
+#endif
 }
 void set_client_size(int w, int h) {
     if (w == client_w && h == client_h) return;
@@ -255,12 +275,16 @@ API(user32, GetCursorPos, 1) { wr32(c.arg(0), mouse_x); wr32(c.arg(0) + 4, mouse
 // The game steers the ball by re-centring the cursor every frame (SetCursorPos) and
 // reading how far it moved. On macOS that is done with SDL relative mouse mode and a
 // virtual cursor; we fall back to the normal cursor once the game stops re-centring.
+// On Android, dragging a finger moves the virtual cursor (the screen acts as a trackball).
 static u32 last_setcursorpos = 0;
 static bool virtual_cursor = false;
 static float mouse_sens = -1;
 static void set_virtual_cursor(bool on) {
     if (on == virtual_cursor) return;
     virtual_cursor = on;
+#ifdef __ANDROID__
+    return;
+#endif
     SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE);
     if (!on && window && focused) {
         int wx, wy; client_to_window(mouse_x, mouse_y, wx, wy);
@@ -276,7 +300,7 @@ API(user32, SetCursorPos, 2) {
 void cursor_tick() {
     if (virtual_cursor && (!focused || SDL_GetTicks() - last_setcursorpos > 250)) set_virtual_cursor(false);
 }
-void virtual_mouse_motion(int xrel, int yrel) {
+void virtual_mouse_motion(float xrel, float yrel) {
     if (mouse_sens < 0) { const char* e = getenv("HB_MOUSE_SENS"); mouse_sens = e ? (float)atof(e) : 1.0f; }
     static float fx = 0, fy = 0;
     fx += xrel * mouse_sens; fy += yrel * mouse_sens;
@@ -324,7 +348,8 @@ static u32 mk_flags() {
 static void post(u32 msg, u32 wp, u32 lp) { queue.push_back({main_hwnd, msg, wp, lp}); }
 
 void cursor_tick();
-void virtual_mouse_motion(int xrel, int yrel);
+void virtual_mouse_motion(float xrel, float yrel);
+static bool touch_mouse(Uint32 which) { return which == SDL_TOUCH_MOUSEID; }
 void platform_pump() {
     if (!window) { SDL_PumpEvents(); return; }
     SDL_Event e;
@@ -361,9 +386,10 @@ void platform_pump() {
             case SDL_MOUSEMOTION:
                 if (e.motion.xrel) dinput_mouse_event(0, (u32)e.motion.xrel);
                 if (e.motion.yrel) dinput_mouse_event(4, (u32)e.motion.yrel);
-                if (SDL_GetRelativeMouseMode()) {
+                if (virtual_cursor && touch_mouse(e.motion.which)) break;  // touch steering uses finger events
+                if (SDL_GetRelativeMouseMode() || virtual_cursor) {
                     mouse_dx += e.motion.xrel; mouse_dy += e.motion.yrel;
-                    virtual_mouse_motion(e.motion.xrel, e.motion.yrel);
+                    virtual_mouse_motion((float)e.motion.xrel, (float)e.motion.yrel);
                     post(0x0200, mk_flags(), ((u32)(u16)mouse_y << 16) | (u16)mouse_x);
                 } else {
                     window_to_client((float)e.motion.x, (float)e.motion.y, mouse_x, mouse_y);
@@ -378,13 +404,26 @@ void platform_pump() {
                 if (b < 0) break;
                 if (down) mouse_buttons |= 1u << b; else mouse_buttons &= ~(1u << b);
                 dinput_mouse_event(12 + b, down ? 0x80 : 0);
-                if (!SDL_GetRelativeMouseMode()) window_to_client((float)e.button.x, (float)e.button.y, mouse_x, mouse_y);
+                if (!SDL_GetRelativeMouseMode() && !virtual_cursor) window_to_client((float)e.button.x, (float)e.button.y, mouse_x, mouse_y);
                 static const u32 msgs[3][2] = {{0x0202, 0x0201}, {0x0205, 0x0204}, {0x0208, 0x0207}};
                 u32 lp = ((u32)(u16)mouse_y << 16) | (u16)mouse_x;
                 post(msgs[b][down], mk_flags(), lp);
                 if (down && e.button.clicks == 2) post(msgs[b][1] + 2 /*DBLCLK*/, mk_flags(), lp);
                 break;
             }
+            case SDL_FINGERMOTION:
+                // touch trackball: a full-width swipe moves the cursor 1.5x the game's width
+                if (virtual_cursor) {
+                    virtual_mouse_motion(e.tfinger.dx * client_w * 1.5f, e.tfinger.dy * client_h * 1.5f);
+                    post(0x0200, mk_flags(), ((u32)(u16)mouse_y << 16) | (u16)mouse_x);
+                }
+                break;
+            case SDL_FINGERDOWN:
+                // two-finger tap toggles the on-screen keyboard (for typing high-score names)
+                if (SDL_GetNumTouchFingers(e.tfinger.touchId) == 2) {
+                    if (SDL_IsTextInputActive()) SDL_StopTextInput(); else SDL_StartTextInput();
+                }
+                break;
             case SDL_MOUSEWHEEL:
                 wheel_accum += e.wheel.y * 120;
                 dinput_mouse_event(8, (u32)(e.wheel.y * 120));
@@ -522,7 +561,7 @@ u32 sdl_to_vk(SDL_Scancode sc) {
     if (sc >= SDL_SCANCODE_KP_1 && sc <= SDL_SCANCODE_KP_9) return 0x61 + (sc - SDL_SCANCODE_KP_1);
     switch (sc) {
         case SDL_SCANCODE_RETURN: case SDL_SCANCODE_KP_ENTER: return 0x0D;
-        case SDL_SCANCODE_ESCAPE: return 0x1B;
+        case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_AC_BACK: return 0x1B;
         case SDL_SCANCODE_BACKSPACE: return 0x08;
         case SDL_SCANCODE_TAB: return 0x09;
         case SDL_SCANCODE_SPACE: return 0x20;
@@ -554,7 +593,7 @@ u32 sdl_to_dik(SDL_Scancode sc) {
     if (sc >= SDL_SCANCODE_F1 && sc <= SDL_SCANCODE_F10) return 0x3B + (sc - SDL_SCANCODE_F1);
     switch (sc) {
         case SDL_SCANCODE_0: return 0x0B; case SDL_SCANCODE_MINUS: return 0x0C; case SDL_SCANCODE_EQUALS: return 0x0D;
-        case SDL_SCANCODE_ESCAPE: return 0x01; case SDL_SCANCODE_BACKSPACE: return 0x0E; case SDL_SCANCODE_TAB: return 0x0F;
+        case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_AC_BACK: return 0x01; case SDL_SCANCODE_BACKSPACE: return 0x0E; case SDL_SCANCODE_TAB: return 0x0F;
         case SDL_SCANCODE_LEFTBRACKET: return 0x1A; case SDL_SCANCODE_RIGHTBRACKET: return 0x1B;
         case SDL_SCANCODE_RETURN: return 0x1C; case SDL_SCANCODE_LCTRL: return 0x1D; case SDL_SCANCODE_SEMICOLON: return 0x27;
         case SDL_SCANCODE_APOSTROPHE: return 0x28; case SDL_SCANCODE_GRAVE: return 0x29; case SDL_SCANCODE_LSHIFT: return 0x2A;
