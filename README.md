@@ -41,7 +41,8 @@ or with `adb install`.
 - Landscape, letterboxed to the game's 4:3.
 - **Drag a finger** to roll the ball; the screen acts like a trackball. **Tap** to select in menus.
 - **Back** pauses (it's the game's Escape key). A **two-finger tap** toggles the on-screen keyboard, for typing high-score names.
-- Gamepads paired with the device work in Party Games, as on the Mac.
+- **Bluetooth/USB mouse and keyboard** work as on a PC. While you steer, the app captures the mouse pointer, so the ball keeps rolling past the screen edge. A physical keyboard can type high-score names directly.
+- **Gamepads** (PS5 DualSense, PS4, Xbox, …) paired with the device drive menus, races and Party Games, as on the Mac. Pair them before starting the app.
 - All levels and modes start unlocked. Game data and saves live in the app's private storage.
 
 How the port differs from macOS:
@@ -61,7 +62,7 @@ connected device or emulator and prints its log.
 | Pause | Esc (or right mouse button) |
 | Fullscreen (Mac) | Cmd+F or Alt+Enter |
 | Quit | Cmd+Q |
-| Gamepad | Connect it before launching. In **Party Games**, select a player row and press Return to cycle that player's input to the controller. Left stick or d-pad steers. |
+| Gamepad | Connect it before launching. Left stick or d-pad steers and navigates menus, A selects, **Start** (or Back/Select) pauses. In **Party Games**, select a player row and press Return to cycle that player's input to the controller. |
 
 Saves, settings and high scores live in `~/Library/Application Support/Hamsterball/game`.
 Delete that folder to start over. If something goes wrong,

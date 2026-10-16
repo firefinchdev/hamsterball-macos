@@ -50,7 +50,10 @@ void ensure_window(int w, int h) {
     SDL_GL_SetSwapInterval(getenv("HB_VSYNC") ? atoi(getenv("HB_VSYNC")) : 0);
     client_w = w; client_h = h;
 #ifdef __ANDROID__
-    SDL_StopTextInput();  // the on-screen keyboard is shown on demand (two-finger tap)
+    // The on-screen keyboard is shown on demand (two-finger tap). Text events stay enabled so
+    // a physical keyboard can still type high-score names.
+    SDL_StopTextInput();
+    SDL_EventState(SDL_TEXTINPUT, SDL_ENABLE);
 #else
     SDL_StartTextInput();
 #endif
@@ -275,16 +278,20 @@ API(user32, GetCursorPos, 1) { wr32(c.arg(0), mouse_x); wr32(c.arg(0) + 4, mouse
 // The game steers the ball by re-centring the cursor every frame (SetCursorPos) and
 // reading how far it moved. On macOS that is done with SDL relative mouse mode and a
 // virtual cursor; we fall back to the normal cursor once the game stops re-centring.
-// On Android, dragging a finger moves the virtual cursor (the screen acts as a trackball).
+// On Android, dragging a finger moves the virtual cursor (the screen acts as a trackball);
+// once a real mouse has been used, steering captures the pointer as on macOS.
 static u32 last_setcursorpos = 0;
 static bool virtual_cursor = false;
 static float mouse_sens = -1;
+#ifdef __ANDROID__
+static bool real_mouse = false;
+#else
+static const bool real_mouse = true;
+#endif
 static void set_virtual_cursor(bool on) {
     if (on == virtual_cursor) return;
     virtual_cursor = on;
-#ifdef __ANDROID__
-    return;
-#endif
+    if (!real_mouse) return;
     SDL_SetRelativeMouseMode(on ? SDL_TRUE : SDL_FALSE);
     if (!on && window && focused) {
         int wx, wy; client_to_window(mouse_x, mouse_y, wx, wy);
@@ -350,6 +357,19 @@ static void post(u32 msg, u32 wp, u32 lp) { queue.push_back({main_hwnd, msg, wp,
 void cursor_tick();
 void virtual_mouse_motion(float xrel, float yrel);
 static bool touch_mouse(Uint32 which) { return which == SDL_TOUCH_MOUSEID; }
+static void mouse_used(Uint32 which) {
+#ifdef __ANDROID__
+    if (real_mouse || touch_mouse(which)) return;
+    real_mouse = true;
+    if (virtual_cursor) SDL_SetRelativeMouseMode(SDL_TRUE);
+#endif
+}
+// Escape held by a controller's Start / Back button (the game has no gamepad pause of its own)
+static void pad_escape(bool down) {
+    g_script_keys[SDL_SCANCODE_ESCAPE] = down;
+    dinput_key_event(0x01, down);
+    post(down ? 0x0100 : 0x0101, 0x1B, key_lparam(SDL_SCANCODE_ESCAPE, !down, false));
+}
 void platform_pump() {
     if (!window) { SDL_PumpEvents(); return; }
     SDL_Event e;
@@ -381,9 +401,11 @@ void platform_pump() {
                 break;
             }
             case SDL_TEXTINPUT:
+                if (g_trace_api) logf("text input '%s'", e.text.text);
                 for (const char* p = e.text.text; *p; p++) if ((u8)*p < 0x80) post(0x0102 /*WM_CHAR*/, (u8)*p, 1);
                 break;
             case SDL_MOUSEMOTION:
+                mouse_used(e.motion.which);
                 if (e.motion.xrel) dinput_mouse_event(0, (u32)e.motion.xrel);
                 if (e.motion.yrel) dinput_mouse_event(4, (u32)e.motion.yrel);
                 if (virtual_cursor && touch_mouse(e.motion.which)) break;  // touch steering uses finger events
@@ -400,6 +422,7 @@ void platform_pump() {
             case SDL_MOUSEBUTTONDOWN:
             case SDL_MOUSEBUTTONUP: {
                 bool down = e.type == SDL_MOUSEBUTTONDOWN;
+                mouse_used(e.button.which);
                 int b = e.button.button == SDL_BUTTON_LEFT ? 0 : e.button.button == SDL_BUTTON_RIGHT ? 1 : e.button.button == SDL_BUTTON_MIDDLE ? 2 : -1;
                 if (b < 0) break;
                 if (down) mouse_buttons |= 1u << b; else mouse_buttons &= ~(1u << b);
@@ -421,8 +444,14 @@ void platform_pump() {
             case SDL_FINGERDOWN:
                 // two-finger tap toggles the on-screen keyboard (for typing high-score names)
                 if (SDL_GetNumTouchFingers(e.tfinger.touchId) == 2) {
-                    if (SDL_IsTextInputActive()) SDL_StopTextInput(); else SDL_StartTextInput();
+                    if (SDL_IsScreenKeyboardShown(window)) { SDL_StopTextInput(); SDL_EventState(SDL_TEXTINPUT, SDL_ENABLE); }
+                    else SDL_StartTextInput();
                 }
+                break;
+            case SDL_CONTROLLERBUTTONDOWN:
+            case SDL_CONTROLLERBUTTONUP:
+                if (e.cbutton.button == SDL_CONTROLLER_BUTTON_START || e.cbutton.button == SDL_CONTROLLER_BUTTON_BACK)
+                    pad_escape(e.type == SDL_CONTROLLERBUTTONDOWN);
                 break;
             case SDL_MOUSEWHEEL:
                 wheel_accum += e.wheel.y * 120;
