@@ -16,4 +16,5 @@ fetch gl4es     https://github.com/ptitSeb/gl4es/archive/a025615bc79ac43ec911dce
 fetch libopenmpt https://lib.openmpt.org/files/libopenmpt/src/libopenmpt-0.8.9+release.makefile.tar.gz libopenmpt-0.8.9+release
 fetch unicorn   https://github.com/unicorn-engine/unicorn/archive/refs/tags/2.1.4.tar.gz unicorn-2.1.4
 python3 ../../third_party/patch_unicorn.py src/unicorn
+python3 patch_sdl.py src/SDL2
 rm -rf dl
