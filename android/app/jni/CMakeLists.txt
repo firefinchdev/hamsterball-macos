@@ -45,7 +45,7 @@ set_target_properties(unicorn PROPERTIES
   INTERFACE_INCLUDE_DIRECTORIES ${TP}/unicorn-android/include)
 
 # the compatibility layer itself (SDL's Java side loads it as libmain.so)
-file(GLOB HB_SRC ${REPO}/src/*.cpp)
+file(GLOB HB_SRC CONFIGURE_DEPENDS ${REPO}/src/*.cpp)
 add_library(main SHARED ${HB_SRC})
 target_include_directories(main PRIVATE ${TP}/src/SDL2/include ${TP}/src/gl4es/include)
 target_compile_definitions(main PRIVATE GL_GLEXT_PROTOTYPES)

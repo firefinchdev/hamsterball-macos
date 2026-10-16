@@ -17,4 +17,5 @@ fetch libopenmpt https://lib.openmpt.org/files/libopenmpt/src/libopenmpt-0.8.9+r
 fetch unicorn   https://github.com/unicorn-engine/unicorn/archive/refs/tags/2.1.4.tar.gz unicorn-2.1.4
 python3 ../../third_party/patch_unicorn.py src/unicorn
 python3 patch_sdl.py src/SDL2
+python3 patch_gl4es.py src/gl4es
 rm -rf dl

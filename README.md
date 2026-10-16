@@ -54,6 +54,60 @@ Build it with `android/build_apk.sh`. It needs Android Studio's SDK + NDK and JD
 libopenmpt and Unicorn, and writes the APK to `dist/`. `android/run_emulator_test.sh` installs a debug build on a
 connected device or emulator and prints its log.
 
+## Web browser
+
+The browser version runs the game in any current browser (Chrome, Edge, Firefox, Safari, including phones and
+tablets) at full speed. You host it yourself on your home network: the build contains the game files, so keep it
+on your own machines and don't put it on a public website.
+
+```sh
+web/build.sh             # builds dist/web/ (about 33 MB)
+python3 web/serve.py     # prints the address to open, e.g. http://192.168.1.41:8080/
+```
+
+Open the printed address on any device on the same Wi-Fi and press **Play**.
+
+- **Mouse** steers. The pointer is captured while you roll; **Esc** releases it and pauses. Click to capture it again.
+- Arrow keys work too. On phones and tablets, **drag a finger** like on Android.
+- **Fullscreen** button in the top-right corner.
+- Saves, settings and high scores stay in that browser (IndexedDB), separately on each device.
+- **Gamepads**: browsers only allow them on secure pages, so serve with `python3 web/serve.py --https`. It uses a
+  self-signed certificate; each device shows a warning once, which you accept.
+
+`web/build.sh JSPI` builds a smaller variant (`dist/web-jspi/`) that needs a recent Chrome, Edge or Firefox.
+
+### How the browser build works
+
+A browser can't run Unicorn: Unicorn translates x86 code into machine code while the game runs, and web pages
+aren't allowed to generate machine code. So for the browser the game's code is **translated ahead of time**:
+
+- `recomp/recomp.py` (the static recompiler) finds every function in `hamsterball.exe` and writes each one as a C
+  function, in `build/recomp/`. Registers and flags become C locals, so the compiler drops flag computations
+  nobody reads. Calls through pointers go via a lookup table, and Windows API calls go straight to the same C++
+  implementations the other versions use.
+- It finds code by following calls and jumps from the entry point, scanning the data sections for pointers into
+  the code (C++ vtables, callbacks), decoding switch jump tables, and using coverage recorded by playing the game
+  under Unicorn (`recomp/coverage/`, recorded by `recomp/run_scripts.sh --coverage` and `tests/level_test.sh`).
+- The translated build reports an x87-only CPU, so the game's MMX/SSE/3DNow! code paths are never taken.
+  Guest `setjmp`/`longjmp` map onto host `setjmp`/`longjmp`.
+- [Emscripten](https://emscripten.org) compiles everything to WebAssembly. Rendering goes through gl4es to WebGL,
+  music through libopenmpt, and the game's endless main loop yields to the page at each frame and `Sleep()`
+  (Asyncify, or JSPI in the variant build).
+
+The translated code also builds natively, which is how it's tested: `make recomp-gen && make hbwrap-recomp` makes
+`./hbwrap-recomp`, a Mac build without Unicorn. `HB_BIN=./hbwrap-recomp tests/level_test.sh N` and
+`recomp/run_scripts.sh ./hbwrap-recomp` play races, menus, tournaments and Party Games on it.
+
+Building needs the Emscripten SDK in `build/emsdk`:
+
+```sh
+git clone https://github.com/emscripten-core/emsdk.git build/emsdk
+build/emsdk/emsdk install 4.0.10 && build/emsdk/emsdk activate 4.0.10
+python3 -m venv build/venv && build/venv/bin/pip install capstone==5.0.6   # for recomp/recomp.py
+```
+
+`tests/web_test.py` runs the browser build in headless Chrome with scripted input and takes screenshots.
+
 ## Playing
 
 | | |

@@ -34,3 +34,4 @@
 /android/app/jni/lib/
 /hbwrap-recomp
 __pycache__/
+/web/lib/

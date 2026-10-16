@@ -59,6 +59,7 @@ struct KHandle {
     FILE* f = nullptr;
     std::string path;
     u32 file_handle = 0;  // for mappings
+    bool written = false;
 };
 static std::map<u32, KHandle> handles;
 static u32 next_handle = 0x100;
@@ -69,8 +70,12 @@ static KHandle* get_handle(u32 h) { auto it = handles.find(h); return it == hand
 API(kernel32, GetTickCount, 0) { return SDL_GetTicks(); }
 API(kernel32, Sleep, 1) {
     platform_pump();
+#ifdef __EMSCRIPTEN__
+    web_yield(c.arg(0));  // the game spins on Sleep(0): let the page run
+#else
     if (c.arg(0)) SDL_Delay(c.arg(0));
     else usleep(300);  // the game spins on Sleep(0); yield a little instead of burning a core
+#endif
     return 0;
 }
 API(kernel32, GetLastError, 0) { return g_last_error; }
@@ -440,7 +445,10 @@ API(kernel32, CreateFileW, 7) { return create_file(gwstr(c.arg(0)), c.arg(1), c.
 API(kernel32, CloseHandle, 1) {
     auto it = handles.find(c.arg(0));
     if (it == handles.end()) return 1;
-    if (it->second.kind == KHandle::File && it->second.f) fclose(it->second.f);
+    if (it->second.kind == KHandle::File && it->second.f) {
+        fclose(it->second.f);
+        if (it->second.written) file_written(it->second.path);
+    }
     handles.erase(it);
     return 1;
 }
@@ -454,6 +462,7 @@ API(kernel32, ReadFile, 5) {
 API(kernel32, WriteFile, 5) {
     KHandle* h = get_handle(c.arg(0));
     if (!h || !h->f) { wr32(c.arg(3), c.arg(2)); return 1; }  // console etc.
+    h->written = true;
     size_t n = fwrite(g2h(c.arg(1)), 1, c.arg(2), h->f);
     wr32(c.arg(3), (u32)n);
     return 1;

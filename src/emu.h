@@ -131,5 +131,13 @@ void dump_regs();
 void platform_pump();
 extern u32 g_last_error;
 
+// A game file was written (saves, settings): the browser build copies it to persistent storage.
+void file_written(const std::string& host_path);
+#ifdef __EMSCRIPTEN__
+void web_yield(u32 ms);
+void web_frame_done();  // a frame was presented
+void web_init_storage(const std::string& game_dir);
+#endif
+
 // Run until the guest exits.
 int emu_run(const std::string& exe_path);

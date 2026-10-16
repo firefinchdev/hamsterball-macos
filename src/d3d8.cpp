@@ -5,14 +5,40 @@
 // converted on every draw into a fixed host layout (D3D colours are BGRA, pre-transformed
 // vertices need un-projecting), which is cheap for a game of this era.
 #include "platform.h"
-#ifdef __ANDROID__
+#if HB_GLES
 #include <GL/gl.h>  // gl4es
 #include <GL/glext.h>
+#ifdef __EMSCRIPTEN__
+// gl4es only exports the core framebuffer entry points in its Emscripten build
+#undef glBindFramebufferEXT
+#define glBindFramebufferEXT gl4es_glBindFramebuffer
+#undef glBindRenderbufferEXT
+#define glBindRenderbufferEXT gl4es_glBindRenderbuffer
+#undef glBlitFramebufferEXT
+#define glBlitFramebufferEXT gl4es_glBlitFramebuffer
+#undef glCheckFramebufferStatusEXT
+#define glCheckFramebufferStatusEXT gl4es_glCheckFramebufferStatus
+#undef glDeleteFramebuffersEXT
+#define glDeleteFramebuffersEXT gl4es_glDeleteFramebuffers
+#undef glDeleteRenderbuffersEXT
+#define glDeleteRenderbuffersEXT gl4es_glDeleteRenderbuffers
+#undef glFramebufferRenderbufferEXT
+#define glFramebufferRenderbufferEXT gl4es_glFramebufferRenderbuffer
+#undef glFramebufferTexture2DEXT
+#define glFramebufferTexture2DEXT gl4es_glFramebufferTexture2D
+#undef glGenFramebuffersEXT
+#define glGenFramebuffersEXT gl4es_glGenFramebuffers
+#undef glGenRenderbuffersEXT
+#define glGenRenderbuffersEXT gl4es_glGenRenderbuffers
+#undef glRenderbufferStorageEXT
+#define glRenderbufferStorageEXT gl4es_glRenderbufferStorage
+#endif
 #else
 #include <OpenGL/gl.h>
 #include <OpenGL/glext.h>
 #endif
 #include <cmath>
+#include <cstddef>
 #include <algorithm>
 
 #define D3D_OK 0
@@ -95,6 +121,13 @@ static State st;
 static u32 bb_w = 640, bb_h = 480, bb_fmt = F_X8R8G8B8;
 static bool windowed = true;
 static GLuint bb_fbo = 0, bb_color = 0, bb_depth = 0;
+// Framebuffer binds are cached: gl4es checks glGetError after each one, which stalls WebGL.
+static GLuint bound_fb = ~0u;
+static void bind_fb(GLuint fb) {
+    if (fb == bound_fb) return;
+    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, fb);
+    bound_fb = fb;
+}
 static int bb_surf = -1, depth_surf = -1;
 static int cur_rt = -1, cur_ds = -1;  // surface ids (-1 => default back buffer)
 static GLuint white_tex = 0;
@@ -134,7 +167,7 @@ static void default_state() {
 // ---- refcounting helpers ------------------------------------------------------------------------
 static void tex_destroy(Res* r) {
     if (r->tex) glDeleteTextures(1, &r->tex);
-    if (r->fbo) glDeleteFramebuffersEXT(1, &r->fbo);
+    if (r->fbo) { if (bound_fb == r->fbo) bound_fb = ~0u; glDeleteFramebuffersEXT(1, &r->fbo); }
     if (r->depth_rb) glDeleteRenderbuffersEXT(1, &r->depth_rb);
     r->tex = r->fbo = r->depth_rb = 0;
     for (auto& l : r->levels) if (l.addr) gfree(l.addr);
@@ -213,11 +246,11 @@ static void rt_readback(Res* r) {
     if (!r->fbo || r->levels.empty()) return;
     Level& l = r->levels[0];
     GLint prev; glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &prev);
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, r->fbo);
+    bind_fb(r->fbo);
     std::vector<u8> tmp((size_t)l.w * l.h * 4);
     glReadPixels(0, 0, l.w, l.h, GL_BGRA, GL_UNSIGNED_BYTE, tmp.data());
     for (u32 y = 0; y < l.h; y++) memcpy(g2h(l.addr + y * l.pitch), &tmp[(size_t)(l.h - 1 - y) * l.w * 4], std::min(l.pitch, l.w * 4));
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, prev);
+    bind_fb(prev);
 }
 
 // ---- framebuffer -----------------------------------------------------------------------------------
@@ -229,12 +262,12 @@ static u32 choose_scale() {
     int px_h = 1080;
     if (SDL_GetDesktopDisplayMode(disp < 0 ? 0 : disp, &dm) == 0) px_h = dm.h;
     // desktop mode height is in points on macOS; account for Retina backing scale
-    int ww, wh, dw, dh; SDL_GetWindowSize(plat::window, &ww, &wh); SDL_GL_GetDrawableSize(plat::window, &dw, &dh);
+    int ww, wh, dw, dh; SDL_GetWindowSize(plat::window, &ww, &wh); plat::drawable_size(dw, dh);
     float backing = wh ? (float)dh / wh : 1.0f;
     (void)ddpi;
     u32 k = (u32)ceilf(px_h * backing / bb_h);
-#ifdef __ANDROID__
-    return std::max(1u, std::min(2u, k));  // mobile GPUs: cap supersampling at 2x
+#if HB_GLES
+    return std::max(1u, std::min(2u, k));  // mobile GPUs / WebGL: cap supersampling at 2x
 #else
     return std::max(1u, std::min(4u, k));
 #endif
@@ -243,6 +276,7 @@ static void glcheck(const char* where) {
     for (GLenum e; (e = glGetError()) != GL_NO_ERROR;) logf("GL error %x after %s", e, where);
 }
 static void create_backbuffer() {
+    bound_fb = ~0u;
     bb_scale = choose_scale();
     glcheck("before back buffer");
     logf("render scale %ux (%ux%u)", bb_scale, bb_w * bb_scale, bb_h * bb_scale);
@@ -251,27 +285,40 @@ static void create_backbuffer() {
     }
     glGenTextures(1, &bb_color);
     glBindTexture(GL_TEXTURE_2D, bb_color);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, bb_w * bb_scale, bb_h * bb_scale, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    // Non-power-of-two: ES 2 / WebGL 1 only sample it unmipmapped with clamped wrapping, and
+    // gl4es decides how to store it at upload time, so set that first.
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, bb_w * bb_scale, bb_h * bb_scale, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
     glcheck("color texture");
-    glGenFramebuffersEXT(1, &bb_fbo);
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, bb_fbo);
-    glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D, bb_color, 0);
-    // depth/stencil: packed 24/8 where supported; OpenGL ES devices may only take depth alone
+    // depth/stencil: packed 24/8 where supported; OpenGL ES devices may only take depth alone.
+    // Each attempt gets a fresh framebuffer: WebGL rejects one left with conflicting attachments.
     struct { GLenum fmt; bool stencil; } tries[] = {{GL_DEPTH24_STENCIL8_EXT, true}, {GL_DEPTH_COMPONENT24, false}, {GL_DEPTH_COMPONENT16, false}};
     GLenum s = 0;
     for (auto& t : tries) {
+        glGenFramebuffersEXT(1, &bb_fbo);
+        bind_fb(bb_fbo);
+        glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D, bb_color, 0);
         glGenRenderbuffersEXT(1, &bb_depth);
         glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, bb_depth);
         glRenderbufferStorageEXT(GL_RENDERBUFFER_EXT, t.fmt, bb_w * bb_scale, bb_h * bb_scale);
-        glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, bb_depth);
-        glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_STENCIL_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, t.stencil ? bb_depth : 0);
+#ifdef __EMSCRIPTEN__
+        if (t.stencil)  // WebGL 1 takes a packed buffer only on the combined attachment point
+            glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, 0x821A /*GL_DEPTH_STENCIL_ATTACHMENT*/, GL_RENDERBUFFER_EXT, bb_depth);
+        else
+#endif
+        {
+            glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, bb_depth);
+            glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_STENCIL_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, t.stencil ? bb_depth : 0);
+        }
         glcheck("depth buffer");
         s = glCheckFramebufferStatusEXT(GL_FRAMEBUFFER_EXT);
         if (s == GL_FRAMEBUFFER_COMPLETE_EXT) break;
         logf("back buffer: depth format %x not usable (status %x)", t.fmt, s);
-        glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, 0);
+        bind_fb(0);
+        glDeleteFramebuffersEXT(1, &bb_fbo);
         glDeleteRenderbuffersEXT(1, &bb_depth);
     }
     glcheck("status check");
@@ -281,14 +328,14 @@ static void create_backbuffer() {
     rt_w = bb_w; rt_h = bb_h; rt_scale = bb_scale;
 }
 static void bind_render_target() {
-    if (cur_rt < 0 || res[cur_rt]->backbuffer) { glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, bb_fbo); rt_w = bb_w; rt_h = bb_h; rt_scale = bb_scale; return; }
+    if (cur_rt < 0 || res[cur_rt]->backbuffer) { bind_fb(bb_fbo); rt_w = bb_w; rt_h = bb_h; rt_scale = bb_scale; return; }
     Res* s = res[cur_rt];
     if (s->tex_res >= 0) {
         Res* t = res[s->tex_res];
         if (!t->fbo) {
             tex_upload(t);
             glGenFramebuffersEXT(1, &t->fbo);
-            glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, t->fbo);
+            bind_fb(t->fbo);
             glFramebufferTexture2DEXT(GL_FRAMEBUFFER_EXT, GL_COLOR_ATTACHMENT0_EXT, GL_TEXTURE_2D, t->tex, 0);
             glGenRenderbuffersEXT(1, &t->depth_rb);
             glBindRenderbufferEXT(GL_RENDERBUFFER_EXT, t->depth_rb);
@@ -296,11 +343,11 @@ static void bind_render_target() {
             glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_DEPTH_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, t->depth_rb);
             glFramebufferRenderbufferEXT(GL_FRAMEBUFFER_EXT, GL_STENCIL_ATTACHMENT_EXT, GL_RENDERBUFFER_EXT, t->depth_rb);
         }
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, t->fbo);
+        bind_fb(t->fbo);
         rt_w = t->levels[0].w; rt_h = t->levels[0].h; rt_scale = 1;
         return;
     }
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, bb_fbo);
+    bind_fb(bb_fbo);
     rt_w = bb_w; rt_h = bb_h; rt_scale = bb_scale;
 }
 
@@ -754,26 +801,50 @@ static void draw(u32 prim, u32 nprims, const u8* vdata, u32 stride, u32 nverts, 
     // secondary (specular) colour sum when specular enabled without lighting
     if (st.rs[29] && f.specular && (!st.rs[137] || f.rhw)) glEnable(GL_COLOR_SUM); else glDisable(GL_COLOR_SUM);
 
-    const HVtx* base = vbuf.data();
+#if HB_GLES
+    // Stream the converted vertices and indices through buffer objects: WebGL has no client
+    // arrays (Emscripten's emulation uploads too few vertices for indexed draws), and it's
+    // faster on ES drivers too.
+    static GLuint vbo = 0, ibo = 0;
+    if (!vbo) { glGenBuffers(1, &vbo); glGenBuffers(1, &ibo); }
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)((vmax - vmin + 1) * sizeof(HVtx)), vbuf.data(), GL_STREAM_DRAW);
+    const char* base = nullptr;  // attribute pointers below become offsets into the buffer
+#else
+    const char* base = (const char*)vbuf.data();
+#endif
+#define VATTR(m) (base + offsetof(HVtx, m))
     glEnableClientState(GL_VERTEX_ARRAY);
-    glVertexPointer(4, GL_FLOAT, sizeof(HVtx), base->pos);
-    if (f.normal && !f.rhw) { glEnableClientState(GL_NORMAL_ARRAY); glNormalPointer(GL_FLOAT, sizeof(HVtx), base->nrm); }
+    glVertexPointer(4, GL_FLOAT, sizeof(HVtx), VATTR(pos));
+    if (f.normal && !f.rhw) { glEnableClientState(GL_NORMAL_ARRAY); glNormalPointer(GL_FLOAT, sizeof(HVtx), VATTR(nrm)); }
     else { glDisableClientState(GL_NORMAL_ARRAY); glNormal3f(0, 0, 0); }
     glEnableClientState(GL_COLOR_ARRAY);
-    glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(HVtx), base->col);
+    glColorPointer(4, GL_UNSIGNED_BYTE, sizeof(HVtx), VATTR(col));
     glEnableClientState(GL_SECONDARY_COLOR_ARRAY);
-    glSecondaryColorPointer(3, GL_UNSIGNED_BYTE, sizeof(HVtx), base->spec);
-    if (f.rhw && st.rs[28] && !st.rs[35]) { glEnableClientState(GL_FOG_COORDINATE_ARRAY); glFogCoordPointer(GL_FLOAT, sizeof(HVtx), &base->fog); }
+    glSecondaryColorPointer(3, GL_UNSIGNED_BYTE, sizeof(HVtx), VATTR(spec));
+    if (f.rhw && st.rs[28] && !st.rs[35]) { glEnableClientState(GL_FOG_COORDINATE_ARRAY); glFogCoordPointer(GL_FLOAT, sizeof(HVtx), VATTR(fog)); }
     else glDisableClientState(GL_FOG_COORDINATE_ARRAY);
     for (int s = 0; s < active_units; s++) {
         u32 tci = st.tss[s][11] & 0xFFFF;
         glClientActiveTexture(GL_TEXTURE0 + s);
-        if ((int)tci < f.ntc && tci < 4) glTexCoordPointer(4, GL_FLOAT, sizeof(HVtx), base->tc[tci]);
+        if ((int)tci < f.ntc && tci < 4) glTexCoordPointer(4, GL_FLOAT, sizeof(HVtx), VATTR(tc) + tci * sizeof(float) * 4);
     }
     glClientActiveTexture(GL_TEXTURE0);
 
+#if HB_GLES
+    if (idx) {
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, (GLsizeiptr)(nidx * 4), ibuf.data(), GL_STREAM_DRAW);
+        glDrawElements(mode, (GLsizei)nidx, GL_UNSIGNED_INT, nullptr);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+    } else {
+        glDrawArrays(mode, 0, (GLsizei)count);
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+#else
     if (idx) glDrawElements(mode, (GLsizei)nidx, GL_UNSIGNED_INT, ibuf.data());
     else glDrawArrays(mode, 0, (GLsizei)count);
+#endif
 }
 
 // ---- IDirect3D8 ------------------------------------------------------------------------------------
@@ -959,11 +1030,11 @@ COM(IDirect3DDevice8, Reset, 2) {
 void script_tick(u32 frame);
 void d3d_screenshot(const char* path) {
     GLint prev; glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &prev);
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, bb_fbo);
+    bind_fb(bb_fbo);
     u32 W = bb_w * bb_scale, H = bb_h * bb_scale;
     std::vector<u8> px((size_t)W * H * 4);
     glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, prev);
+    bind_fb(prev);
     FILE* f = fopen(path, "wb");
     if (!f) return;
     fprintf(f, "P6\n%u %u\n255\n", W, H);
@@ -974,11 +1045,11 @@ void d3d_screenshot(const char* path) {
 static void present_frame() {
     int x, y, w, h;
     plat::present_rect(x, y, w, h);
-    int dw, dh; SDL_GL_GetDrawableSize(plat::window, &dw, &dh);
-#ifdef __ANDROID__
+    int dw, dh; plat::drawable_size(dw, dh);
+#if HB_GLES
     // OpenGL ES 2 has no framebuffer blit: draw the back buffer texture as a quad instead.
     // (Every draw call sets the state it needs, so nothing here has to be restored.)
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, 0);
+    bind_fb(0);
     glDisable(GL_SCISSOR_TEST); glDisable(GL_DEPTH_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_BLEND);
     glDisable(GL_ALPHA_TEST); glDisable(GL_CULL_FACE); glDisable(GL_FOG); glDisable(GL_LIGHTING); glDisable(GL_COLOR_SUM);
     glColorMask(1, 1, 1, 1);
@@ -1007,6 +1078,7 @@ static void present_frame() {
 #else
     glBindFramebufferEXT(GL_READ_FRAMEBUFFER_EXT, bb_fbo);
     glBindFramebufferEXT(GL_DRAW_FRAMEBUFFER_EXT, 0);
+    bound_fb = ~0u;
     glDisable(GL_SCISSOR_TEST);
     glColorMask(1, 1, 1, 1);
     glViewport(0, 0, dw, dh);
@@ -1015,7 +1087,11 @@ static void present_frame() {
     glBlitFramebufferEXT(0, 0, bb_w * bb_scale, bb_h * bb_scale, x, y, x + w, y + h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
 #endif
     SDL_GL_SwapWindow(plat::window);
-    glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, bb_fbo);
+#ifdef __EMSCRIPTEN__
+    web_yield(0);  // the browser shows the canvas once we return to it
+    web_frame_done();
+#endif
+    bind_fb(bb_fbo);
     frame_no++;
     static u32 fps_t0 = SDL_GetTicks(), fps_n = 0;
     fps_n++;
@@ -1122,14 +1198,14 @@ static bool surf_mem(Res* s, SurfMem& m) {
         // materialise back buffer contents into guest memory on demand
         if (!s->addr) { s->pitch = bb_w * 4; s->addr = galloc(s->pitch * bb_h); }
         GLint prev; glGetIntegerv(GL_FRAMEBUFFER_BINDING_EXT, &prev);
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, bb_fbo);
+        bind_fb(bb_fbo);
         u32 W = bb_w * bb_scale, H = bb_h * bb_scale;
         std::vector<u8> tmp((size_t)W * H * 4);
         glReadPixels(0, 0, W, H, GL_BGRA, GL_UNSIGNED_BYTE, tmp.data());
         for (u32 y = 0; y < bb_h; y++)
             for (u32 x = 0; x < bb_w; x++)
                 memcpy(g2h(s->addr + y * s->pitch + x * 4), &tmp[((size_t)(H - 1 - y * bb_scale) * W + x * bb_scale) * 4], 4);
-        glBindFramebufferEXT(GL_FRAMEBUFFER_EXT, prev);
+        bind_fb(prev);
         m = {s->addr, s->pitch, bb_w, bb_h, F_X8R8G8B8, nullptr, nullptr};
         return true;
     }

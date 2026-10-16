@@ -2,8 +2,16 @@
 #include "platform.h"
 extern u8 g_script_keys[SDL_NUM_SCANCODES];
 #include <algorithm>
-#ifdef __ANDROID__
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#include <emscripten/html5.h>
+#endif
+#if HB_GLES
 extern "C" void initialize_gl4es(void);
+#endif
+#ifdef __EMSCRIPTEN__
+extern "C" void set_getprocaddress(void* (*proc)(const char*));
+extern "C" void* emscripten_GetProcAddress(const char* name);
 #endif
 
 namespace plat {
@@ -19,12 +27,16 @@ std::deque<GuestMsg> queue;
 
 void ensure_window(int w, int h) {
     if (window) return;
-#ifdef __ANDROID__
-    // OpenGL ES 2 context; gl4es provides the desktop GL fixed-function API on top of it
+#if HB_GLES
+    // OpenGL ES 2 / WebGL context; gl4es provides the desktop GL fixed-function API on top of it
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_ES);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
+#ifdef __ANDROID__
     Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_FULLSCREEN | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_SHOWN;
+#else
+    Uint32 flags = SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN;  // the page scales the canvas
+#endif
 #else
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 2);
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
@@ -33,7 +45,11 @@ void ensure_window(int w, int h) {
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
     SDL_GL_SetAttribute(SDL_GL_STENCIL_SIZE, 8);
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+#ifdef __EMSCRIPTEN__
+    int scale = 2;  // canvas pixels; the page scales it to fit
+#else
     int scale = 1;
+#endif
     if (const char* s = getenv("HB_SCALE")) scale = std::max(1, atoi(s));
     window = SDL_CreateWindow("Hamsterball", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, w * scale, h * scale, flags);
     if (!window) fatal("SDL_CreateWindow: %s", SDL_GetError());
@@ -44,6 +60,11 @@ void ensure_window(int w, int h) {
 #endif
     gl = SDL_GL_CreateContext(window);
     if (!gl) fatal("SDL_GL_CreateContext: %s", SDL_GetError());
+#ifdef __EMSCRIPTEN__
+    // gl4es probes the current WebGL context (extensions, limits) through this lookup
+    set_getprocaddress(emscripten_GetProcAddress);
+    initialize_gl4es();
+#endif
     // No vsync by default: the game paces itself (88 simulation ticks/s, one frame each), and
     // a 60 Hz swap wait would throw away a third of its frames. macOS composites windows, so
     // this doesn't tear; on ProMotion displays every frame is shown. HB_VSYNC=1 caps to the display.
@@ -66,8 +87,16 @@ void set_client_size(int w, int h) {
         if (ww < w || wh < h) SDL_SetWindowSize(window, w, h);
     }
 }
+void drawable_size(int& dw, int& dh) {
+#ifdef __EMSCRIPTEN__
+    // SDL's idea of the window size can lag behind the canvas; the canvas is what we draw to
+    emscripten_get_canvas_element_size("#canvas", &dw, &dh);
+#else
+    SDL_GL_GetDrawableSize(window, &dw, &dh);
+#endif
+}
 void present_rect(int& x, int& y, int& w, int& h) {
-    int dw, dh; SDL_GL_GetDrawableSize(window, &dw, &dh);
+    int dw, dh; drawable_size(dw, dh);
     float s = std::min((float)dw / client_w, (float)dh / client_h);
     w = (int)(client_w * s); h = (int)(client_h * s);
     x = (dw - w) / 2; y = (dh - h) / 2;
@@ -75,7 +104,7 @@ void present_rect(int& x, int& y, int& w, int& h) {
 void window_to_client(float wx, float wy, int& cx, int& cy) {
     int ww, wh, dw, dh;
     SDL_GetWindowSize(window, &ww, &wh);
-    SDL_GL_GetDrawableSize(window, &dw, &dh);
+    drawable_size(dw, dh);
     float px = wx * dw / ww, py = wy * dh / wh;
     int x, y, w, h; present_rect(x, y, w, h);
     cx = (int)((px - x) * client_w / w);
@@ -86,7 +115,7 @@ void window_to_client(float wx, float wy, int& cx, int& cy) {
 void client_to_window(int cx, int cy, int& wx, int& wy) {
     int ww, wh, dw, dh;
     SDL_GetWindowSize(window, &ww, &wh);
-    SDL_GL_GetDrawableSize(window, &dw, &dh);
+    drawable_size(dw, dh);
     int x, y, w, h; present_rect(x, y, w, h);
     float px = x + (cx + 0.5f) * w / client_w, py = y + (cy + 0.5f) * h / client_h;
     wx = (int)(px * ww / dw); wy = (int)(py * wh / dh);
@@ -283,7 +312,7 @@ API(user32, GetCursorPos, 1) { wr32(c.arg(0), mouse_x); wr32(c.arg(0) + 4, mouse
 static u32 last_setcursorpos = 0;
 static bool virtual_cursor = false;
 static float mouse_sens = -1;
-#ifdef __ANDROID__
+#if HB_TOUCH
 static bool real_mouse = false;
 #else
 static const bool real_mouse = true;
@@ -358,7 +387,7 @@ void cursor_tick();
 void virtual_mouse_motion(float xrel, float yrel);
 static bool touch_mouse(Uint32 which) { return which == SDL_TOUCH_MOUSEID; }
 static void mouse_used(Uint32 which) {
-#ifdef __ANDROID__
+#if HB_TOUCH
     if (real_mouse || touch_mouse(which)) return;
     real_mouse = true;
     if (virtual_cursor) SDL_SetRelativeMouseMode(SDL_TRUE);
@@ -370,8 +399,29 @@ static void pad_escape(bool down) {
     dinput_key_event(0x01, down);
     post(down ? 0x0100 : 0x0101, 0x1B, key_lparam(SDL_SCANCODE_ESCAPE, !down, false));
 }
+#ifdef __EMSCRIPTEN__
+// In a browser, Esc while the pointer is locked only releases the lock (the page never sees
+// the key), so losing the lock mid-race pauses the game like Esc would.
+EM_JS(int, js_pointer_unlocked, (), {
+    if (!Module.hbLockWatch) {
+        Module.hbLockWatch = 1;
+        Module.hbUnlocked = 0;
+        document.addEventListener('pointerlockchange', function() { if (!document.pointerLockElement) Module.hbUnlocked = 1; });
+    }
+    var u = Module.hbUnlocked; Module.hbUnlocked = 0; return u;
+});
+#endif
 void platform_pump() {
     if (!window) { SDL_PumpEvents(); return; }
+#ifdef __EMSCRIPTEN__
+    static u32 esc_release = 0;  // a held Escape, so polled keyboard state sees it too
+    if (js_pointer_unlocked() && virtual_cursor) {
+        virtual_cursor = false;  // relock (on the next click) once the game re-centres the cursor
+        pad_escape(true);
+        esc_release = SDL_GetTicks() + 120;
+    }
+    if (esc_release && SDL_GetTicks() >= esc_release) { esc_release = 0; pad_escape(false); }
+#endif
     SDL_Event e;
     while (SDL_PollEvent(&e)) {
         switch (e.type) {

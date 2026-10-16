@@ -4,6 +4,11 @@
 #include <SDL.h>
 #include <deque>
 
+#if defined(__ANDROID__) || defined(__EMSCRIPTEN__)
+#define HB_GLES 1   // OpenGL ES 2 / WebGL, with gl4es providing the desktop GL API
+#define HB_TOUCH 1  // touch first: the screen is a trackball; a mouse is captured once one is used
+#endif
+
 struct GuestMsg { u32 hwnd, msg, wparam, lparam; };
 
 namespace plat {
@@ -24,6 +29,8 @@ void set_client_size(int w, int h);
 // Map window pixel coordinates to client (back buffer) coordinates.
 void window_to_client(float wx, float wy, int& cx, int& cy);
 void client_to_window(int cx, int cy, int& wx, int& wy);
+// Size of what we draw to, in pixels.
+void drawable_size(int& dw, int& dh);
 // Letterboxed viewport of the back buffer inside the drawable (pixels).
 void present_rect(int& x, int& y, int& w, int& h);
 }

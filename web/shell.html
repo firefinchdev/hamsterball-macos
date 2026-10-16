@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hamster Ball</title>
+<style>
+  :root { --bg: #0b0b10; --fg: #f4f1e8; --dim: #9a968c; --accent: #ffcc33; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+    font: 15px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #stage { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; background: #000; aspect-ratio: 4 / 3; width: min(100vw, calc(100vh * 4 / 3));
+    height: auto; image-rendering: auto; touch-action: none; outline: none; }
+  #overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; background: rgba(11, 11, 16, 0.92); text-align: center; padding: 16px; box-sizing: border-box; }
+  #overlay h1 { margin: 0; font-size: 28px; letter-spacing: 0.02em; }
+  #status { color: var(--dim); min-height: 1.4em; }
+  #bar { width: min(320px, 80vw); height: 6px; border-radius: 3px; background: #26252b; overflow: hidden; }
+  #bar > div { height: 100%; width: 0; background: var(--accent); transition: width 0.2s; }
+  #play { display: none; font: inherit; font-size: 18px; font-weight: 600; padding: 12px 32px; border: 0; border-radius: 999px;
+    background: var(--accent); color: #1a1400; cursor: pointer; }
+  #play:focus-visible { outline: 3px solid var(--fg); outline-offset: 3px; }
+  #help { color: var(--dim); font-size: 13px; max-width: 420px; }
+  #error { display: none; color: #ff8a80; max-width: 520px; white-space: pre-wrap; }
+  #fs { position: fixed; top: 12px; right: 12px; display: none; font: inherit; font-size: 13px; padding: 6px 12px;
+    border: 1px solid rgba(255, 255, 255, 0.25); border-radius: 999px; background: rgba(0, 0, 0, 0.45); color: var(--fg);
+    cursor: pointer; opacity: 0.35; transition: opacity 0.2s; }
+  #fs:hover, #fs:focus-visible { opacity: 1; }
+  :fullscreen #fs { display: none !important; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="canvas" tabindex="-1" oncontextmenu="event.preventDefault()"></canvas></div>
+<button id="fs" type="button">Fullscreen</button>
+<div id="overlay">
+  <h1>Hamster Ball</h1>
+  <div id="bar"><div></div></div>
+  <div id="status">Loading…</div>
+  <button id="play" type="button">Play</button>
+  <div id="help">Mouse or arrow keys steer (the pointer is captured while you roll; click to recapture) ·
+    on phones and tablets, drag a finger · Esc pauses · gamepads work over HTTPS. Saves stay in this browser.</div>
+  <div id="error"></div>
+</div>
+<script>
+  var overlay = document.getElementById('overlay'), statusEl = document.getElementById('status');
+  var bar = document.querySelector('#bar > div'), play = document.getElementById('play'), errEl = document.getElementById('error');
+  function fail(msg) {
+    overlay.style.display = 'flex'; errEl.style.display = 'block'; errEl.textContent = msg;
+    play.style.display = 'none'; statusEl.textContent = 'The game stopped.';
+  }
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    noInitialRun: true,
+    print: function(t) { console.log(t); },
+    printErr: function(t) { console.warn(t); if (/^FATAL/.test(t)) fail(t); },
+    setStatus: function(t) {
+      var m = t.match(/\(([\d.]+)\/([\d.]+)\)/);
+      if (m) bar.style.width = (100 * m[1] / m[2]) + '%';
+      statusEl.textContent = t ? t.replace(/\(.*\)/, '').trim() || 'Loading…' : '';
+    },
+    onRuntimeInitialized: function() {
+      bar.style.width = '100%';
+      statusEl.textContent = 'Ready';
+      play.style.display = 'inline-block';
+      play.focus();
+      if (autoplay) play.click();
+    },
+    onAbort: function(what) { fail('Error: ' + what); },
+    // test hooks: ?autoplay starts without the button; hbenv=VAR=value (repeatable) sets the
+    // same HB_* variables as the desktop build; hbscript=<text> becomes HB_SCRIPT
+    preRun: [function() {
+      var q = new URLSearchParams(location.search);
+      q.getAll('hbenv').forEach(function(kv) { var i = kv.indexOf('='); if (i > 0) Module.ENV[kv.slice(0, i)] = kv.slice(i + 1); });
+      if (q.has('hbscript')) { Module.FS.writeFile('/hbscript.txt', q.get('hbscript')); Module.ENV.HB_SCRIPT = '/hbscript.txt'; }
+    }]
+  };
+  var autoplay = new URLSearchParams(location.search).has('autoplay');
+  if (!('Suspending' in WebAssembly) && @JSPI_BUILD@) {
+    statusEl.textContent = '';
+    fail('This browser can’t run this build (it needs WebAssembly JSPI). Use a current Chrome, Edge or Firefox, or the default build (web/build.sh).');
+  }
+  var fsButton = document.getElementById('fs');
+  fsButton.addEventListener('click', function() {
+    var el = document.documentElement;
+    (el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+    Module.canvas.focus();
+  });
+  play.addEventListener('click', function() {
+    overlay.style.display = 'none';
+    if (document.documentElement.requestFullscreen || document.documentElement.webkitRequestFullscreen) fsButton.style.display = 'block';
+    Module.canvas.focus();
+    Module.callMain([]);
+  });
+  window.addEventListener('error', function(e) { fail(String(e.message || e)); });
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

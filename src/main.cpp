@@ -96,8 +96,13 @@ int main(int argc, char** argv) {
 #endif
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_TIMER) != 0) fatal("SDL_Init: %s", SDL_GetError());
     std::string dir;
-#ifdef __ANDROID__
+#if defined(__ANDROID__)
     dir = android_game_dir();
+    seed_registry(dir);
+#elif defined(__EMSCRIPTEN__)
+    // game files are preloaded into /game; saves come back from IndexedDB
+    dir = "/game";
+    web_init_storage(dir + "/");
     seed_registry(dir);
 #else
     if (argc > 1 && argv[1][0] != '-') dir = argv[1];

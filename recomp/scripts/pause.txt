@@ -1,0 +1,21 @@
+280 move 320 462
+300 mdown
+306 mup
+400 key Return
+500 key Down
+520 key Return
+600 key Return
+1100 hold Up 100
+1300 key Escape
+1400 shot SHOT1
+1420 key Down
+1430 key Return
+1600 shot SHOT2
+1700 key Escape
+1800 key Down
+1810 key Down
+1820 key Down
+1830 key Return
+2000 shot SHOT3
+2100 shot SHOT4
+2110 quit

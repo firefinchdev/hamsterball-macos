@@ -14,16 +14,19 @@ static bool reg_loaded = false;
 static std::string up(std::string s) { for (auto& c : s) c = (char)toupper((u8)c); return s; }
 static std::string reg_file() { return g_game_dir + "registry.txt"; }
 static void reg_save() {
-    std::ofstream f(reg_file());
-    for (auto& k : reg) {
-        f << "[" << k.first << "]\n";
-        for (auto& v : k.second) {
-            f << v.first << "=" << v.second.type << ":";
-            char hex[3];
-            for (u8 b : v.second.data) { snprintf(hex, 3, "%02x", b); f << hex; }
-            f << "\n";
+    {
+        std::ofstream f(reg_file());
+        for (auto& k : reg) {
+            f << "[" << k.first << "]\n";
+            for (auto& v : k.second) {
+                f << v.first << "=" << v.second.type << ":";
+                char hex[3];
+                for (u8 b : v.second.data) { snprintf(hex, 3, "%02x", b); f << hex; }
+                f << "\n";
+            }
         }
     }
+    file_written(reg_file());
 }
 static void reg_load() {
     if (reg_loaded) return;
