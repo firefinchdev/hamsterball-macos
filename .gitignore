@@ -32,3 +32,5 @@
 /android/third_party/unicorn-android/
 /android/hb_env.txt
 /android/app/jni/lib/
+/hbwrap-recomp
+__pycache__/

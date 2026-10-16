@@ -12,6 +12,7 @@
 #include "platform.h"
 #include <fstream>
 #include <sstream>
+#include <unistd.h>
 
 void d3d_screenshot(const char* path);
 

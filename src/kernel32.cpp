@@ -98,7 +98,12 @@ API(kernel32, TerminateProcess, 2) {
 }
 API(kernel32, IsProcessorFeaturePresent, 1) {
     u32 f = c.arg(0);
+#ifdef HB_RECOMP
+    (void)f;
+    return 0;  // the recompiled CPU is x87-only
+#else
     return f == 6 /*XMMI*/ || f == 10 /*XMMI64 (SSE2)*/ || f == 3 /*MMX*/ ? 1 : 0;
+#endif
 }
 API(kernel32, GetVersionExA, 1) {
     u32 p = c.arg(0);
@@ -114,7 +119,7 @@ API(kernel32, GetSystemInfo, 1) {
     memset(g2h(p), 0, 36);
     wr32(p + 4, 0x1000);        // page size
     wr32(p + 8, 0x10000);       // min app addr
-    wr32(p + 12, 0x7FFEFFFF);   // max app addr
+    wr32(p + 12, MAP_END - 0x10001);  // max app addr
     wr32(p + 16, 1);            // active processor mask
     wr32(p + 20, 1);            // number of processors
     wr32(p + 24, 586);          // processor type
@@ -369,7 +374,7 @@ API(kernel32, IsBadCodePtr, 1) { return c.arg(0) < 0x10000 ? 1 : 0; }
 
 // ---- TLS / sync ----------------------------------------------------------------------
 static u32 tls_used = 0;
-static const u32 TLS_SLOTS = 0x7FFDD000;
+static const u32 TLS_SLOTS = TLS_SLOTS_ADDR;
 API(kernel32, TlsAlloc, 0) {
     for (u32 i = 0; i < 64; i++) if (!(tls_used & 0)) {}
     static u32 next = 0;
@@ -396,7 +401,7 @@ API(kernel32, RaiseException, 4) {
 API(kernel32, RtlUnwind, 4) {
     // Unlink SEH frames up to the target frame.
     u32 target = c.arg(0);
-    u32 teb = 0x7FFDE000;
+    u32 teb = TEB_ADDR;
     if (target) wr32(teb, target);
     else wr32(teb, 0xFFFFFFFF);
     return 0;

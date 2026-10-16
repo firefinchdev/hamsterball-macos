@@ -8,7 +8,9 @@
 #include <map>
 #include <functional>
 #include <initializer_list>
+#ifndef HB_RECOMP
 #include <unicorn/unicorn.h>
+#endif
 
 typedef uint32_t u32;
 typedef int32_t i32;
@@ -17,8 +19,34 @@ typedef uint8_t u8;
 typedef uint64_t u64;
 typedef int64_t i64;
 
+#ifndef HB_RECOMP
 extern uc_engine* g_uc;
+#endif
 extern u8* g_mem;          // host base of guest address space
+
+// ---- guest address space layout -------------------------------------------
+#ifdef HB_RECOMP
+// Recompiled builds pack everything below 256MB, which a WebAssembly build can allocate.
+static const u32 MAP_BASE = 0x00010000, MAP_END = 0x10000000;
+static const u32 STACK_LO = 0x00100000, STACK_HI = 0x00400000;  // 3MB main stack
+static const u32 VALLOC_LO = 0x02000000, VALLOC_HI = 0x04000000;
+static const u32 HEAP_LO = 0x04000000, HEAP_HI = 0x0F000000;
+static const u32 THUNK_BASE = 0x0F000000, THUNK_SIZE = 8, THUNK_MAX = 0x10000;
+static const u32 RET_MAGIC = 0x0F7F0000;  // call_guest return target
+static const u32 EXIT_MAGIC = 0x0F7F0010;
+static const u32 TEB_ADDR = 0x0FFDE000, PEB_ADDR = 0x0FFDF000, GDT_ADDR = 0x0FFE0000;
+static const u32 TLS_SLOTS_ADDR = 0x0FFDD000;  // 64 TLS slots (TEB+0xE10 normally)
+#else
+static const u32 MAP_BASE = 0x00010000, MAP_END = 0x80000000;
+static const u32 STACK_LO = 0x00100000, STACK_HI = 0x00400000;  // 3MB main stack
+static const u32 VALLOC_LO = 0x02000000, VALLOC_HI = 0x20000000;
+static const u32 HEAP_LO = 0x20000000, HEAP_HI = 0x70000000;
+static const u32 THUNK_BASE = 0x7F000000, THUNK_SIZE = 8, THUNK_MAX = 0x10000;
+static const u32 RET_MAGIC = 0x7F7F0000;  // call_guest return target (holds a hlt)
+static const u32 EXIT_MAGIC = 0x7F7F0010;
+static const u32 TEB_ADDR = 0x7FFDE000, PEB_ADDR = 0x7FFDF000, GDT_ADDR = 0x7FFE0000;
+static const u32 TLS_SLOTS_ADDR = 0x7FFDD000;  // 64 TLS slots (TEB+0xE10 normally)
+#endif
 extern bool g_trace_api;   // log every API call
 extern std::string g_game_dir;  // host directory containing hamsterball.exe (with trailing '/')
 

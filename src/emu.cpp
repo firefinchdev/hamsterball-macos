@@ -10,24 +10,18 @@
 #include <unordered_map>
 #include <set>
 #include <algorithm>
-
+#ifdef HB_RECOMP
+#include "recomp_rt.h"
+void recomp_init();
+#else
 uc_engine* g_uc;
+#endif
 u8* g_mem;
 bool g_trace_api = false;
 std::string g_game_dir;
 u32 g_last_error = 0;
 
-// ---- address space layout --------------------------------------------------
-static const u32 MAP_BASE = 0x00010000;
-static const u32 MAP_END = 0x80000000;
-static const u32 STACK_LO = 0x00100000, STACK_HI = 0x00400000;  // 3MB main stack
-static const u32 VALLOC_LO = 0x02000000, VALLOC_HI = 0x20000000;
-static const u32 HEAP_LO = 0x20000000, HEAP_HI = 0x70000000;
-static const u32 THUNK_BASE = 0x7F000000, THUNK_SIZE = 8, THUNK_MAX = 0x10000;
-static const u32 RET_MAGIC = 0x7F7F0000;  // call_guest return target (holds a hlt)
-static const u32 EXIT_MAGIC = 0x7F7F0010;
-static const u32 TEB_ADDR = 0x7FFDE000, PEB_ADDR = 0x7FFDF000, GDT_ADDR = 0x7FFE0000;
-static const u32 TLS_SLOTS_ADDR = 0x7FFDD000;  // 64 TLS slots (TEB+0xE10 normally)
+// (address space layout: see emu.h)
 
 void logf(const char* fmt, ...) {
     va_list ap; va_start(ap, fmt);
@@ -40,10 +34,15 @@ void logf(const char* fmt, ...) {
     fputc('\n', stderr);
 }
 void dump_regs() {
+#ifdef HB_RECOMP
+    if (!g_mem) return;
+    u32 r[9] = {cpu.eax, cpu.ebx, cpu.ecx, cpu.edx, cpu.esi, cpu.edi, cpu.ebp, cpu.esp, cpu.ret_to};
+#else
     if (!g_uc) return;
     u32 r[9]; int ids[9] = {UC_X86_REG_EAX, UC_X86_REG_EBX, UC_X86_REG_ECX, UC_X86_REG_EDX, UC_X86_REG_ESI,
                             UC_X86_REG_EDI, UC_X86_REG_EBP, UC_X86_REG_ESP, UC_X86_REG_EIP};
     for (int i = 0; i < 9; i++) uc_reg_read(g_uc, ids[i], &r[i]);
+#endif
     fprintf(stderr, "eax=%08x ebx=%08x ecx=%08x edx=%08x esi=%08x edi=%08x ebp=%08x esp=%08x eip=%08x\n",
             r[0], r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8]);
     fprintf(stderr, "stack:");
@@ -145,6 +144,7 @@ u32 galloc(u32 size, bool zero) {
     if (!a) {
         if (heap_bump + rs > HEAP_HI) fatal("guest heap exhausted (%u bytes)", size);
         a = heap_bump; heap_bump += rs;
+        if (((heap_bump - HEAP_LO) >> 24) != ((heap_bump - rs - HEAP_LO) >> 24)) logf("guest heap: %u MB", (heap_bump - HEAP_LO) >> 20);
     }
     heap_used[a] = rs;
     if (zero) memset(g_mem + a, 0, rs);
@@ -197,6 +197,7 @@ u32 valloc(u32 size, u32 want) {
     }
     if (valloc_bump + size > VALLOC_HI) fatal("VirtualAlloc space exhausted");
     u32 a = valloc_bump; valloc_bump += size;
+    logf("VirtualAlloc: %u KB at %08x (%u MB in use)", size >> 10, a, (valloc_bump - VALLOC_LO) >> 20);
     valloc_used[a] = size;
     memset(g_mem + a, 0, size);
     return a;
@@ -299,6 +300,44 @@ std::string module_name(u32 h) {
 // ---- CPU / hooks ------------------------------------------------------------
 static int g_call_depth = 0;
 
+#ifdef HB_RECOMP
+// Recompiled code calls an API thunk address: run it, then pop like its `ret n` would.
+bool recomp_api_thunk(u32 a) {
+    if (a < THUNK_BASE || (a - THUNK_BASE) % THUNK_SIZE) return false;
+    u32 id = (a - THUNK_BASE) / THUNK_SIZE;
+    if (id >= thunks.size()) return false;
+    Thunk& t = thunks[id];
+    u32 esp = cpu.esp;
+    u32 ret = rd32(esp);
+    if (!t.fn) fatal("unimplemented API %s (called from %08x)", t.name.c_str(), ret);
+    t.calls++;
+    Ctx c; c.esp = esp;
+    if (g_trace_api) logf("[api] %s(%08x, %08x, %08x, %08x) from %08x", t.name.c_str(), c.arg(0), c.arg(1), c.arg(2), c.arg(3), ret);
+    u32 r = t.fn(c);
+    cpu.eax = r;
+    if (c.set_edx) cpu.edx = c.edx_out;
+    cpu.ret_to = ret;
+    cpu.esp = esp + 4 + (t.nargs > 0 ? 4 * t.nargs : 0);
+    return true;
+}
+
+u32 call_guest(u32 addr, std::initializer_list<u32> args, bool cdecl_) {
+    hb_cpu saved = cpu;
+    u32 esp = cpu.esp - 64;  // leave a red zone below the interrupted frame
+    std::vector<u32> a(args);
+    for (int i = (int)a.size() - 1; i >= 0; i--) { esp -= 4; wr32(esp, a[i]); }
+    esp -= 4; wr32(esp, RET_MAGIC);
+    cpu.esp = esp;
+    g_call_depth++;
+    hb_call(addr);
+    g_call_depth--;
+    if (cpu.ret_to != RET_MAGIC) fatal("guest callback %08x returned to %08x", addr, cpu.ret_to);
+    u32 eax = cpu.eax;
+    cpu = saved;
+    (void)cdecl_;
+    return eax;
+}
+#else
 static void finish_api(u32 eax, Ctx& c) {
     uc_reg_write(g_uc, UC_X86_REG_EAX, &eax);
     if (c.set_edx) uc_reg_write(g_uc, UC_X86_REG_EDX, &c.edx_out);
@@ -338,11 +377,27 @@ static bool hook_unmapped(uc_engine* uc, uc_mem_type type, u64 addr, int size, i
     return false;
 }
 
+// HB_COVERAGE=file: log each new (previous block -> block) transition into the exe's code,
+// for the static recompiler's code discovery (recomp/). "0" as previous = entered from the host.
+static FILE* cov_file = nullptr;
+static u32 cov_prev = 0;
+static void hook_block(uc_engine*, u64 addr, u32, void*) {
+    static std::set<u64> seen;
+    u32 a = (u32)addr;
+    u32 from = cov_prev;
+    cov_prev = a;
+    if (a < 0x401000 || a >= 0x4DE000) { cov_prev = 1; return; }  // 1 = came back from an API thunk
+    if (seen.insert(((u64)from << 32) | a).second) fprintf(cov_file, "%x %x\n", from, a);
+}
+
 static void run_until(u32 start, u32 until) {
+    u32 saved_prev = cov_prev;
+    cov_prev = 0;
     uc_err e = uc_emu_start(g_uc, start, until, 0, 0);
     if (e != UC_ERR_OK) {
         fatal("emulation error: %s", uc_strerror(e));
     }
+    cov_prev = saved_prev;
 }
 
 u32 call_guest(u32 addr, std::initializer_list<u32> args, bool cdecl_) {
@@ -364,6 +419,7 @@ u32 call_guest(u32 addr, std::initializer_list<u32> args, bool cdecl_) {
     (void)cdecl_;
     return eax;
 }
+#endif
 
 // ---- GDT / TEB ---------------------------------------------------------------
 static u64 make_desc(u32 base, u32 limit, bool code, int dpl) {
@@ -381,6 +437,7 @@ static u64 make_desc(u32 base, u32 limit, bool code, int dpl) {
 }
 
 static void setup_segments() {
+#ifndef HB_RECOMP
     uc_x86_mmr gdtr = {};
     gdtr.base = GDT_ADDR;
     gdtr.limit = 32 * 8 - 1;
@@ -397,6 +454,9 @@ static void setup_segments() {
     uc_reg_write(g_uc, UC_X86_REG_ES, &ds);
     uc_reg_write(g_uc, UC_X86_REG_GS, &ds);
     uc_reg_write(g_uc, UC_X86_REG_FS, &fs);
+#else
+    cpu.fs_base = TEB_ADDR;
+#endif
 
     // TEB / PEB
     wr32(TEB_ADDR + 0x00, 0xFFFFFFFF);  // SEH chain end
@@ -413,6 +473,7 @@ static void setup_segments() {
     wr32(PEB_ADDR + 0xA8, 1);           // OSMinorVersion
     wr32(PEB_ADDR + 0xAC, 2600);
 
+#ifndef HB_RECOMP
     // Windows defaults: x87 all exceptions masked, 53-bit precision; SSE all masked
     u32 fpcw_before = 0, mxcsr_before = 0;
     uc_reg_read(g_uc, UC_X86_REG_FPCW, &fpcw_before);
@@ -429,6 +490,7 @@ static void setup_segments() {
     uc_reg_read(g_uc, UC_X86_REG_CR4, &cr4);
     cr4 |= (1 << 9) | (1 << 10);
     uc_reg_write(g_uc, UC_X86_REG_CR4, &cr4);
+#endif
 }
 
 // ---- PE loading ------------------------------------------------------------------
@@ -501,6 +563,26 @@ void print_api_stats() {
     for (auto& p : v) logf("%10llu %s", (unsigned long long)p.first, p.second.c_str());
 }
 
+#ifdef HB_RECOMP
+int emu_run(const std::string& exe_path) {
+#ifdef __EMSCRIPTEN__
+    g_mem = (u8*)calloc(1, MAP_END);
+    if (!g_mem) fatal("out of memory for the guest address space");
+#else
+    void* p = mmap(nullptr, MAP_END, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    if (p == MAP_FAILED) fatal("mmap failed");
+    g_mem = (u8*)p;
+#endif
+    recomp_init();
+    setup_segments();
+    u32 entry = load_pe(exe_path);
+    cpu.esp = STACK_HI - 16;
+    wr32(cpu.esp, EXIT_MAGIC);
+    hb_call(entry);
+    logf("guest returned from entry point");
+    return 0;
+}
+#else
 int emu_run(const std::string& exe_path) {
     uc_err e = uc_open(UC_ARCH_X86, UC_MODE_32, &g_uc);
     if (e) fatal("uc_open: %s", uc_strerror(e));
@@ -515,6 +597,13 @@ int emu_run(const std::string& exe_path) {
     uc_hook_add(g_uc, &h1, UC_HOOK_INTR, (void*)hook_intr, nullptr, 1, 0);
     uc_hook_add(g_uc, &h3, UC_HOOK_CODE, (void*)hook_thunk, nullptr, THUNK_BASE, THUNK_BASE + THUNK_MAX - 1);
     uc_hook_add(g_uc, &h2, UC_HOOK_MEM_UNMAPPED, (void*)hook_unmapped, nullptr, 1, 0);
+    if (const char* cov = getenv("HB_COVERAGE")) {
+        cov_file = fopen(cov, "a");
+        if (!cov_file) fatal("cannot open %s", cov);
+        setvbuf(cov_file, nullptr, _IOLBF, 0);
+        uc_hook h4;
+        uc_hook_add(g_uc, &h4, UC_HOOK_BLOCK, (void*)hook_block, nullptr, 1, 0);
+    }
 
     g_mem[RET_MAGIC] = 0xF4;  // hlt (never executed: emulation stops at this address)
     g_mem[EXIT_MAGIC] = 0xF4;
@@ -528,3 +617,4 @@ int emu_run(const std::string& exe_path) {
     logf("guest returned from entry point");
     return 0;
 }
+#endif
