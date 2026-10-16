@@ -107,6 +107,7 @@ API(kernel32, IsProcessorFeaturePresent, 1) {
     (void)f;
     return 0;  // the recompiled CPU is x87-only
 #else
+    if (getenv("HB_X87_ONLY")) return 0;
     return f == 6 /*XMMI*/ || f == 10 /*XMMI64 (SSE2)*/ || f == 3 /*MMX*/ ? 1 : 0;
 #endif
 }

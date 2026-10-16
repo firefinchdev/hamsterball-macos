@@ -5,7 +5,7 @@ Usage: recomp.py <hamsterball.exe> <outdir> [coverage files...]
 
 Each x86 function becomes a C function `void F_<addr>(void)`. Inside a function the eight
 registers and the arithmetic flags are C locals, so the C compiler drops flag computations
-nobody reads. Calls spill the registers to the shared `cpu` struct; `ret` stores its return
+nobody reads. Calls spill the registers and flags to the shared `cpu` struct; `ret` stores its return
 address in cpu.ret_to, and every call site checks it came back where x86 would have.
 Calls through pointers go via hb_call(), which looks the target up in the function table or
 runs a Windows API thunk.
@@ -705,7 +705,7 @@ class Gen:
             return
         if mn == "ret":
             n = ops[0].imm if ops else 0
-            e("cpu.ret_to = R32(esp); esp += %d; SPILL(); return;" % (4 + n))
+            e("cpu.ret_to = R32(esp); esp += %d; SPILL(); FPU_LEAVE(0x%Xu); return;" % (4 + n, self.f.entry))
             return
         if mn in ("hlt", "int3", "ud2", "int"):
             e("SPILL(); hb_trap(0x%Xu); return;" % i.address)
@@ -990,9 +990,10 @@ class Gen:
         out.append("void %s(void) {" % name)
         out.append("    uint8_t* const M = g_mem;")
         out.append("    uint32_t eax, ecx, edx, ebx, esp, ebp, esi, edi;")
-        out.append("    uint32_t CF = 0, ZF = 0, SF = 0, OF = 0, PF = 0, fd = 0, fs = 0, fr = 0;")
+        out.append("    uint32_t CF, ZF, SF, OF, PF, fd = 0, fs = 0, fr = 0;")
         out.append("    (void)CF; (void)ZF; (void)SF; (void)OF; (void)PF; (void)fd; (void)fs; (void)fr;")
         out.append("    RELOAD();")
+        out.append("    FPU_ENTER();")
         head = len(out)
         addrs = sorted(f.insns)
         if addrs[0] != f.entry:

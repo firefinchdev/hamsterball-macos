@@ -56,6 +56,14 @@ extern "C" void hb_call(uint32_t t) {
     fatal("call to %08x: not recompiled code (called from %08x)", t, rd32(cpu.esp));
 }
 
+#ifdef HB_FPU_CHECK
+#include <set>
+extern "C" void hb_fpu_check(uint32_t func, int top0) {
+    static std::set<u32> seen;
+    int d = (top0 - fpu.top) & 7;  // values left on the stack
+    if (d != 0 && d != 1 && seen.insert(func).second) logf("fpu: %08x returned with %d value(s) left (top %d -> %d)", func, d, top0, fpu.top);
+}
+#endif
 extern "C" void hb_badret(uint32_t expected, uint32_t got) {
     fatal("returned to %08x, expected %08x", got, expected);
 }

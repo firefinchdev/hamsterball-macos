@@ -363,6 +363,17 @@ static void hook_thunk(uc_engine* uc, u64 addr, u32 size, void*) {
     finish_api(r, c);
 }
 
+// HB_X87_ONLY: report a CPU without MMX/SSE/3DNow!, like the recompiled build (for comparing them)
+static int hook_cpuid(uc_engine* uc, void*) {
+    u32 leaf; uc_reg_read(uc, UC_X86_REG_EAX, &leaf);
+    u32 a = 0, b = 0, c = 0, d = 0;
+    if (leaf == 0) { a = 1; b = 0x756E6547; d = 0x49656E69; c = 0x6C65746E; }
+    else if (leaf == 1) { a = 0x611; d = 0x8111; }
+    uc_reg_write(uc, UC_X86_REG_EAX, &a); uc_reg_write(uc, UC_X86_REG_EBX, &b);
+    uc_reg_write(uc, UC_X86_REG_ECX, &c); uc_reg_write(uc, UC_X86_REG_EDX, &d);
+    return 1;  // skip the real instruction
+}
+
 static void hook_intr(uc_engine* uc, u32 intno, void*) {
     u32 eip;
     uc_reg_read(uc, UC_X86_REG_EIP, &eip);
@@ -597,6 +608,7 @@ int emu_run(const std::string& exe_path) {
     uc_hook_add(g_uc, &h1, UC_HOOK_INTR, (void*)hook_intr, nullptr, 1, 0);
     uc_hook_add(g_uc, &h3, UC_HOOK_CODE, (void*)hook_thunk, nullptr, THUNK_BASE, THUNK_BASE + THUNK_MAX - 1);
     uc_hook_add(g_uc, &h2, UC_HOOK_MEM_UNMAPPED, (void*)hook_unmapped, nullptr, 1, 0);
+    if (getenv("HB_X87_ONLY")) { uc_hook h5; uc_hook_add(g_uc, &h5, UC_HOOK_INSN, (void*)hook_cpuid, nullptr, 1, 0, UC_X86_INS_CPUID); }
     if (const char* cov = getenv("HB_COVERAGE")) {
         cov_file = fopen(cov, "a");
         if (!cov_file) fatal("cannot open %s", cov);

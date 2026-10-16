@@ -15,6 +15,8 @@ typedef struct {
     uint32_t ret_to;   /* return address popped by the last `ret` */
     uint32_t df;       /* direction flag */
     uint32_t fs_base;  /* TEB */
+    uint32_t cf, zf, sf, of, pf;  /* arithmetic flags across calls and returns (hand-written CRT
+                                     helpers return results in them, e.g. the x87 math routines) */
 } hb_cpu;
 typedef struct {
     double st[8];
@@ -60,6 +62,16 @@ typedef struct hb_sjrec { jmp_buf jb; uint32_t ret; struct hb_sjrec* prev; int l
 void hb_sj_link(hb_sjrec* r, uint32_t ret);
 void hb_sj_unlink(hb_sjrec* r);
 
+/* debug builds (-DHB_FPU_CHECK): report functions that unbalance the x87 stack */
+#ifdef HB_FPU_CHECK
+void hb_fpu_check(uint32_t func, int top_at_entry);
+#define FPU_ENTER() int fpu_top0 = fpu.top
+#define FPU_LEAVE(f) hb_fpu_check((f), fpu_top0)
+#else
+#define FPU_ENTER() ((void)0)
+#define FPU_LEAVE(f) ((void)0)
+#endif
+
 #define hb_jmp hb_call  /* tail jump: the caller's return address is already on the stack */
 
 /* guest memory (M is the function's local copy of g_mem) */
@@ -90,8 +102,10 @@ static inline void hb_wf64(uint8_t* M, uint32_t a, double v) { memcpy(M + a, &v,
 #define FS_BASE cpu.fs_base
 
 #define PARITY(r) ((uint32_t)!__builtin_parity((r) & 0xFFu))
-#define SPILL() (cpu.eax = eax, cpu.ecx = ecx, cpu.edx = edx, cpu.ebx = ebx, cpu.esp = esp, cpu.ebp = ebp, cpu.esi = esi, cpu.edi = edi)
-#define RELOAD() (eax = cpu.eax, ecx = cpu.ecx, edx = cpu.edx, ebx = cpu.ebx, esp = cpu.esp, ebp = cpu.ebp, esi = cpu.esi, edi = cpu.edi)
+#define SPILL() (cpu.eax = eax, cpu.ecx = ecx, cpu.edx = edx, cpu.ebx = ebx, cpu.esp = esp, cpu.ebp = ebp, cpu.esi = esi, cpu.edi = edi, \
+                 cpu.cf = CF, cpu.zf = ZF, cpu.sf = SF, cpu.of = OF, cpu.pf = PF)
+#define RELOAD() (eax = cpu.eax, ecx = cpu.ecx, edx = cpu.edx, ebx = cpu.ebx, esp = cpu.esp, ebp = cpu.ebp, esi = cpu.esi, edi = cpu.edi, \
+                  CF = cpu.cf, ZF = cpu.zf, SF = cpu.sf, OF = cpu.of, PF = cpu.pf)
 #define CHECKRET(n) do { if (__builtin_expect(cpu.ret_to != (n), 0)) hb_badret((n), cpu.ret_to); } while (0)
 #define MAKE_EFLAGS() (CF | (PF << 2) | (ZF << 6) | (SF << 7) | (cpu.df << 10) | (OF << 11) | 0x202u)
 #define SET_EFLAGS(v) (CF = (v) & 1, PF = ((v) >> 2) & 1, ZF = ((v) >> 6) & 1, SF = ((v) >> 7) & 1, cpu.df = ((v) >> 10) & 1, OF = ((v) >> 11) & 1)
