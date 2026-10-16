@@ -1,10 +1,4 @@
 # Builds the browser version (web/build.sh) and, once enabled, publishes it with GitHub Pages.
-#
-# The site contains the game files, so it must never be public:
-# - The build only runs while the repository is private (its artifacts contain the game too).
-# - Publishing is off until the repository variable PUBLISH_PAGES is set to "true". Set it only
-#   after the repository is in an organization on GitHub Enterprise Cloud and Settings → Pages
-#   has "Source: GitHub Actions" and visibility "Private" (only people with read access).
 name: Website
 
 on:
@@ -21,7 +15,6 @@ concurrency:
 
 jobs:
   build:
-    if: github.event.repository.private
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +34,7 @@ jobs:
       - name: Build the browser version
         run: web/build.sh
 
-      - name: Keep the build as a (private) workflow artifact
+      - name: Keep the build as a workflow artifact
         uses: actions/upload-artifact@v4
         with:
           name: hamsterball-web
@@ -56,7 +49,7 @@ jobs:
 
   deploy:
     needs: build
-    if: github.event.repository.private && vars.PUBLISH_PAGES == 'true'
+    if: vars.PUBLISH_PAGES == 'true'
     runs-on: ubuntu-24.04
     permissions:
       pages: write
