@@ -1,7 +1,8 @@
 # Third-party software
 
-The release app bundles the following libraries. Their sources are available from the linked projects;
-mpg123 (LGPL-2.1) is linked dynamically and can be replaced in `Contents/Frameworks`.
+The releases (macOS app, Android APK, web build) bundle the following libraries. Their sources are
+available from the linked projects; in the macOS app, mpg123 (LGPL-2.1) is linked dynamically and can be
+replaced in `Contents/Frameworks`.
 
 | Component | Version | License | Source |
 |---|---|---|---|

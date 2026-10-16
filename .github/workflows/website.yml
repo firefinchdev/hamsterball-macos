@@ -1,0 +1,69 @@
+# Builds the browser version (web/build.sh) and, once enabled, publishes it with GitHub Pages.
+#
+# The site contains the game files, so it must never be public:
+# - The build only runs while the repository is private (its artifacts contain the game too).
+# - Publishing is off until the repository variable PUBLISH_PAGES is set to "true". Set it only
+#   after the repository is in an organization on GitHub Enterprise Cloud and Settings → Pages
+#   has "Source: GitHub Actions" and visibility "Private" (only people with read access).
+name: Website
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event.repository.private
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Cache Emscripten SDK and third-party sources
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/emsdk
+            android/third_party/src
+          key: web-deps-${{ runner.os }}-emsdk-4.0.10-${{ hashFiles('android/third_party/fetch_deps.sh', 'android/third_party/patch_*.py', 'third_party/patch_unicorn.py') }}
+
+      - name: Build the browser version
+        run: web/build.sh
+
+      - name: Keep the build as a (private) workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hamsterball-web
+          path: dist/web
+          retention-days: 14
+
+      - name: Package for GitHub Pages
+        if: vars.PUBLISH_PAGES == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist/web
+
+  deploy:
+    needs: build
+    if: github.event.repository.private && vars.PUBLISH_PAGES == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

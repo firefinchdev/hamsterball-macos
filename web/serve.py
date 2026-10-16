@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Serve the browser build (dist/web) to your home network.
+"""Serve the browser build of Hamster Ball to your home network.
 
-  python3 web/serve.py [--port 8080] [--https]
+  python3 serve.py [--port 8080] [--https]
+
+Run it from a repository checkout (serves dist/web) or from the unzipped release folder
+(serves the folder it is in).
 
 Open the printed address on any device on the same Wi-Fi. Plain HTTP works for playing with
 mouse, keyboard and touch. Browsers only allow gamepads on secure pages, so --https serves
-with a self-signed certificate (created once in build/web-cert/); each device then shows a
+with a self-signed certificate (created once); each device then shows a
 warning the first time, which you accept for this address.
 """
 import argparse
@@ -17,7 +20,9 @@ import ssl
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+HERE = os.path.dirname(os.path.abspath(__file__))
+STANDALONE = os.path.exists(os.path.join(HERE, "index.html"))  # inside an unzipped release
+ROOT = os.path.dirname(HERE)
 
 
 def lan_ip():
@@ -32,7 +37,7 @@ def lan_ip():
 
 
 def certificate(ip):
-    d = os.path.join(ROOT, "build", "web-cert")
+    d = os.path.join(HERE, ".cert") if STANDALONE else os.path.join(ROOT, "build", "web-cert")
     cert, key, made_for = os.path.join(d, "cert.pem"), os.path.join(d, "key.pem"), os.path.join(d, "ip.txt")
     if not os.path.exists(cert) or not os.path.exists(made_for) or open(made_for).read() != ip:
         os.makedirs(d, exist_ok=True)
@@ -56,7 +61,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--port", type=int, default=8080)
     ap.add_argument("--https", action="store_true", help="serve over HTTPS (needed for gamepads)")
-    ap.add_argument("--dir", default=os.path.join(ROOT, "dist", "web"))
+    ap.add_argument("--dir", default=HERE if STANDALONE else os.path.join(ROOT, "dist", "web"))
     a = ap.parse_args()
     if not os.path.exists(os.path.join(a.dir, "index.html")):
         raise SystemExit("%s has no build: run web/build.sh first" % a.dir)
